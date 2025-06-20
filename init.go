@@ -2,6 +2,10 @@ package main
 
 import (
 	"fmt"
+	"image"
+	_ "image/gif"  // For gif decoder
+	_ "image/jpeg" // For jpeg decoder
+	_ "image/png"  // For png decoder
 	"log"
 	"os"
 	"os/exec"
@@ -11,8 +15,12 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/diamondburned/gotk4/pkg/core/glib"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/disintegration/imaging"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -58,6 +66,7 @@ func NewDefaultConfig(configDir string) *ConfigStruct {
 }
 
 var Config *ConfigStruct
+var cacheDir string
 
 func main() {
 	app := gtk.NewApplication("com.github.diamondburned.gotk4-examples.gtk4.simple", gio.ApplicationFlagsNone)
@@ -70,6 +79,14 @@ func main() {
 		return
 	}
 	log.Printf("Config directory ensured at: %s", configDir)
+
+	// Ensure cache directory exists
+	cacheDir, err = ensureCacheDir()
+	if err != nil {
+		log.Fatalf("Failed to ensure cache directory: %v", err)
+		return
+	}
+	log.Printf("Cache directory ensured at: %s", cacheDir)
 
 	Config = NewDefaultConfig(configDir)
 
@@ -322,6 +339,82 @@ func saveConfig() {
 	log.Printf("Config saved to: %s", configFile)
 }
 
+func cacheImage(imagePath string, cachedThumbnailPath string) {
+	// Open the image file
+	file, err := os.Open(imagePath)
+	if err != nil {
+		log.Printf("Error opening image file %s: %v", imagePath, err)
+		return
+	}
+	defer file.Close()
+
+	// Decode the image
+	img, _, err := image.Decode(file)
+	if err != nil {
+		log.Printf("Error decoding image %s: %v", imagePath, err)
+		return
+	}
+
+	// Resize the image to the desired thumbnail size
+	thumbnail := imaging.Fit(img, 128, 128, imaging.Lanczos)
+
+	cachedThumbnailDir := path.Dir(cachedThumbnailPath)
+
+	err = os.MkdirAll(cachedThumbnailDir, 0755)
+	if err != nil {
+		log.Printf("Error creating directory %s: %v", cachedThumbnailDir, err)
+		return
+	}
+
+	err = imaging.Save(thumbnail, cachedThumbnailPath)
+	if err != nil {
+		log.Printf("Error saving thumbnail to %s: %v", cachedThumbnailDir, err)
+		return
+	}
+
+	log.Printf("Thumbnail saved to: %s", cachedThumbnailDir)
+}
+
+func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
+	go func() {
+		// check for cached thumbnail first
+		tempFilePath := path.Join(cacheDir, path.Base(path.Dir(imagePath)))
+		cachedThumbnailPath := path.Join(tempFilePath, "thumbnail.png")
+
+		if _, err := os.Stat(cachedThumbnailPath); os.IsNotExist(err) {
+			// If the cached thumbnail does not exist, create it
+			log.Printf("Cached thumbnail not found for %s, creating it...", imagePath)
+			cacheImage(imagePath, cachedThumbnailPath)
+		} else {
+			log.Printf("Using cached thumbnail for %s", imagePath)
+		}
+
+		// Convert the image.Image to a GdkPixbuf (GoTk4's image format for display)
+		// This conversion can be resource intensive for very large images,
+		// so doing it after resizing is crucial.
+		pixbuf,err := gdkpixbuf.NewPixbufFromFile(cachedThumbnailPath)
+		if err != nil {
+			log.Printf("Error creating GdkPixbuf from file %s: %v", cachedThumbnailPath, err)
+			return
+		}
+
+		paintable := gdk.NewTextureForPixbuf(pixbuf)
+
+		// Update the gtk.Image widget on the main GTK thread
+		glib.IdleAdd(func() {
+			targetImage.SetFromPaintable(paintable)
+			targetImage.SetPixelSize(pixelSize) // Set the pixel size for the image
+			targetImage.SetHAlign(gtk.AlignCenter)
+			targetImage.SetVAlign(gtk.AlignCenter)
+			targetImage.SetMarginTop(10)
+			targetImage.SetMarginBottom(10)
+			targetImage.SetMarginStart(10)
+			targetImage.SetMarginEnd(10)
+			targetImage.SetVisible(true) // Make sure the image is visible
+		})
+	}()
+}
+
 func activate(app *gtk.Application) {
 	window := gtk.NewApplicationWindow(app)
 	window.SetTitle("linux-wallpaperengine Helper")
@@ -364,7 +457,7 @@ func activate(app *gtk.Application) {
 	flowBox.SetHomogeneous(true)
 	flowBox.SetColumnSpacing(12)
 	flowBox.SetRowSpacing(12)
-	flowBox.SetMaxChildrenPerLine(3)
+	flowBox.SetMaxChildrenPerLine(8)
 	flowBox.SetHAlign(gtk.AlignCenter)
 	flowBox.SetVAlign(gtk.AlignStart)
 	flowBox.SetMarginTop(10)
@@ -427,17 +520,18 @@ func activate(app *gtk.Application) {
 				continue // Skip this wallpaper if no preview image is found
 			}
 
-			image := gtk.NewImageFromFile(imageFile)
-			image.SetPixelSize(128) // Set a fixed size for the image
-			image.SetHAlign(gtk.AlignCenter)
-			image.SetVAlign(gtk.AlignCenter)
-			image.SetMarginTop(10)
-			image.SetMarginBottom(10)
-			image.SetMarginStart(10)
-			image.SetMarginEnd(10)
-			image.SetTooltipText(wallpaper.Name())
+			imageWidget := gtk.NewImageFromIconName("image-x-generic-symbolic")
+			imageWidget.SetPixelSize(128) // Set a fixed size for the image
+			imageWidget.SetHAlign(gtk.AlignCenter)
+			imageWidget.SetVAlign(gtk.AlignCenter)
+			imageWidget.SetMarginTop(10)
+			imageWidget.SetMarginBottom(10)
+			imageWidget.SetMarginStart(10)
+			imageWidget.SetMarginEnd(10)
+			imageWidget.SetTooltipText(wallpaper.Name())
+			flowBox.Append(imageWidget)
 
-			flowBox.Append(image)
+			loadImageAsync(imageFile, imageWidget, 128)
 		}
 	}
 
