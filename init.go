@@ -237,7 +237,7 @@ func isProcessRunning(processName string) ([]string, error) {
 	return []string{}, nil
 }
 
-func applyWallpaper(wallpaperPath string, volume float64) bool {
+func createWallpaperCommand(wallpaperPath string, volume float64) (string, string) {
 	cmd := Config.Constants.LinuxWallpaperEngineBin + " --screen-root HDMI-A-1 --bg " + wallpaperPath
 
 	if volume <= 1 {
@@ -251,8 +251,13 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 		cacheScreenshot = Config.PostProcessing.ScreenshotFile // ~/.cache/linux-wallpaperengine-helper/screenshot.png
 
 		cmd += " --screenshot " + cacheScreenshot
-		log.Printf("Saving screenshot to: %s", cacheScreenshot)
 	}
+
+	return cmd, cacheScreenshot
+}
+
+func applyWallpaper(wallpaperPath string, volume float64) bool {
+	cmd, cacheScreenshot := createWallpaperCommand(wallpaperPath, volume)
 
 	runningPids, err := isProcessRunning("linux-wallpaperengine");
 	if err != nil {
@@ -652,6 +657,23 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperName string, isFavorit
 	})
 	actionGroup.AddAction(&openDirectoryAction.Action)
 
+	// copy_command action
+	copyCommandAction := gio.NewSimpleAction("copy_command", nil)
+	copyCommandAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		log.Printf("Copying command for %s to clipboard", wallpaperName)
+		wallpaperDir := Config.Constants.WallpaperEngineDir
+		fullWallpaperPath := path.Join(wallpaperDir, wallpaperName)
+		cmd, _ := createWallpaperCommand(fullWallpaperPath, float64(Config.SavedUIState.Volume))
+		clipboard := gdk.DisplayGetDefault().Clipboard()
+		// if clipboard == nil {
+		// 	log.Println("Error getting clipboard")
+		// 	return
+		// }
+		clipboard.SetText(cmd)
+		log.Printf("Command copied to clipboard: %s", cmd)
+	})
+	actionGroup.AddAction(&copyCommandAction.Action)
+
 	imageWidget.InsertActionGroup(wallpaperName, actionGroup)
 
 	gesture := gtk.NewGestureClick()
@@ -669,11 +691,12 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperName string, isFavorit
 				contextMenuModel.Append("Add to Favorites", wallpaperName + ".toggle_favorite")
 			}
 			if isBroken {
-				contextMenuModel.Append("Mark as Not Broken", wallpaperName + ".toggle_broken")
+				contextMenuModel.Append("Unmark as Broken", wallpaperName + ".toggle_broken")
 			} else {
 				contextMenuModel.Append("Mark as Broken", wallpaperName + ".toggle_broken")
 			}
 			contextMenuModel.Append("Open Wallpaper Directory", wallpaperName + ".open_directory")
+			contextMenuModel.Append("Copy Command to Clipboard", wallpaperName + ".copy_command")
 
 			contextMenu := gtk.NewPopoverMenuFromModel(contextMenuModel)
 			contextMenu.SetParent(imageWidget)
