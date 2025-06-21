@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"image"
 	_ "image/gif"  // For gif decoder
 	_ "image/jpeg" // For jpeg decoder
@@ -11,6 +10,8 @@ import (
 	"os/exec"
 	"path"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,19 +27,21 @@ import (
 )
 
 type ConstantsStruct struct {
-	LinuxWallpaperEngineBin  string `toml:"linux_wallpaperengine_bin"`
-	WallpaperEngineDir       string `toml:"wallpaper_engine_dir"`
-	LastSetId 							 string `toml:"last_set_id"`
+	LinuxWallpaperEngineBin  string `toml:"linux_wallpaperengine_bin"` // in case someone didnt install it in PATH
+	WallpaperEngineDir       string `toml:"wallpaper_engine_dir"`      // in case you installed wallpaper engine in a different directory
+	LastSetId 							 string `toml:"last_set_id"`               // the last set wallpaper ID, used for restoring the wallpaper TODO: add multi-monitor support
 }
 
 type PostProcessingStruct struct {
-	Enabled        bool   `toml:"enabled"`
-	ScreenshotFile string `toml:"screenshot_file"`
-	PostCommand    string `toml:"post_command"`
+	Enabled        bool   `toml:"enabled"`         // whether any of this section is enabled
+	ScreenshotFile string `toml:"screenshot_file"` // the file where the screenshot will be saved with the --screenshot flag
+	PostCommand    string `toml:"post_command"`    // the command to run after the wallpaper is applied, with some placeholders
 }
 
 type SavedUIStateStruct struct {
-	Volume int64 `toml:"volume"`
+	Broken    []string `toml:"broken"`    // user marked as "broken"; can be hidden from UI or shown at the end of the list
+	Favorites []string `toml:"favorites"` // user marked as "favorite"; shown at the top of the list
+	Volume    int64 `toml:"volume"`       // the volume level for the wallpaper engine, 0-100; 0 = --silent, > 0 = --volume <value>
 }
 
 type ConfigStruct struct {
@@ -60,7 +63,9 @@ func NewDefaultConfig(configDir string) *ConfigStruct {
 			PostCommand:    "",
 		},
 		SavedUIState: SavedUIStateStruct{
-			Volume: 100, // Default volume set to 100%
+			Broken:    []string{},
+			Favorites: []string{},
+			Volume: 100,
 		},
 	}
 }
@@ -69,22 +74,22 @@ var Config *ConfigStruct
 var cacheDir string
 
 func main() {
-	app := gtk.NewApplication("com.github.diamondburned.gotk4-examples.gtk4.simple", gio.ApplicationFlagsNone)
+	app := gtk.NewApplication("dev._6gh.linux-wallpaperengine-helper", gio.ApplicationFlagsNone)
 	app.ConnectActivate(func() { activate(app) })
 
-	// Ensure config directory exists
+	// ensure ~/.config/linux-wallpaperengine-helper
 	configDir, err := ensureConfigDir()
 	if err != nil {
 		log.Fatalf("Failed to ensure config directory: %v", err)
-		return
+		os.Exit(1)
 	}
 	log.Printf("Config directory ensured at: %s", configDir)
 
-	// Ensure cache directory exists
+	// ensure ~/.cache/linux-wallpaperengine-helper
 	cacheDir, err = ensureCacheDir()
 	if err != nil {
 		log.Fatalf("Failed to ensure cache directory: %v", err)
-		return
+		os.Exit(1)
 	}
 	log.Printf("Cache directory ensured at: %s", cacheDir)
 
@@ -105,8 +110,6 @@ func main() {
 			log.Fatalf("Failed to write config file: %v", err)
 			return
 		}
-
-		fmt.Println(Config)
 
 		log.Printf("Default config file created at: %s", configFile)
 	} else {
@@ -140,10 +143,17 @@ func main() {
 			os.Exit(1)
 		}
 		wallpaperPath := path.Join(Config.Constants.WallpaperEngineDir, Config.Constants.LastSetId)
+
+		if _, err := os.Stat(wallpaperPath); os.IsNotExist(err) {
+			log.Printf("Could'nt find wallpaper at path: %s", wallpaperPath)
+			log.Println("Cannot restore wallpaper, exiting.")
+			os.Exit(1)
+		}
+
 		log.Printf("Restoring wallpaper from path: %s", wallpaperPath)
-		success := applyWallpaper(wallpaperPath, float64(Config.SavedUIState.Volume)) // Convert volume to a percentage
+		success := applyWallpaper(wallpaperPath, float64(Config.SavedUIState.Volume))
 	  if !success {
-			log.Println("Failed to restore wallpaper.")
+			log.Println("Failed to restore wallpaper, exiting.")
 			os.Exit(1)
 		} else {
 			log.Println("Wallpaper restored successfully.")
@@ -208,17 +218,17 @@ func isProcessRunning(processName string) ([]string, error) {
 	output, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
-			return []string{}, nil // Process is not running
+			return []string{}, nil 
 		}
-		return []string{}, err // Some other error occurred
+		return []string{}, err 
 	}
 	// If output is not empty, return the pids
 	if strings.TrimSpace(string(output)) != "" {
 		pids := strings.Fields(string(output))
 		log.Printf("Process '%s' is running with PIDs: %v", processName, pids)
-		return pids, nil // Process is running
+		return pids, nil
 	}
-	return []string{}, nil // Process is not running
+	return []string{}, nil
 }
 
 func applyWallpaper(wallpaperPath string, volume float64) bool {
@@ -275,7 +285,7 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 		execCmd.Stdin = devNull
 		execCmd.Stdout = devNull
 		execCmd.Stderr = devNull
-		defer devNull.Close() // Ensure /dev/null is closed after the command starts
+		defer devNull.Close()
 	}
 
 	err = execCmd.Start()
@@ -340,7 +350,7 @@ func saveConfig() {
 }
 
 func cacheImage(imagePath string, cachedThumbnailPath string) {
-	// Open the image file
+	// TODO: add support for gifs
 	file, err := os.Open(imagePath)
 	if err != nil {
 		log.Printf("Error opening image file %s: %v", imagePath, err)
@@ -348,14 +358,14 @@ func cacheImage(imagePath string, cachedThumbnailPath string) {
 	}
 	defer file.Close()
 
-	// Decode the image
 	img, _, err := image.Decode(file)
 	if err != nil {
 		log.Printf("Error decoding image %s: %v", imagePath, err)
 		return
 	}
 
-	// Resize the image to the desired thumbnail size
+	// Resize the image to the desired thumbnail size (128x128 pixels)
+	// this is to have a uniform look for all images
 	thumbnail := imaging.Fit(img, 128, 128, imaging.Lanczos)
 
 	cachedThumbnailDir := path.Dir(cachedThumbnailPath)
@@ -378,8 +388,9 @@ func cacheImage(imagePath string, cachedThumbnailPath string) {
 func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 	go func() {
 		// check for cached thumbnail first
+		// TODO: add support for gifs
 		tempFilePath := path.Join(cacheDir, path.Base(path.Dir(imagePath)))
-		cachedThumbnailPath := path.Join(tempFilePath, "thumbnail.png")
+		cachedThumbnailPath := path.Join(tempFilePath, "thumbnail.png") // ~/.cache/linux-wallpaperengine-helper/<wallpaper_id>/thumbnail.png
 
 		if _, err := os.Stat(cachedThumbnailPath); os.IsNotExist(err) {
 			// If the cached thumbnail does not exist, create it
@@ -389,30 +400,134 @@ func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 			log.Printf("Using cached thumbnail for %s", imagePath)
 		}
 
-		// Convert the image.Image to a GdkPixbuf (GoTk4's image format for display)
-		// This conversion can be resource intensive for very large images,
-		// so doing it after resizing is crucial.
+		// convert to pixbuf
 		pixbuf,err := gdkpixbuf.NewPixbufFromFile(cachedThumbnailPath)
 		if err != nil {
 			log.Printf("Error creating GdkPixbuf from file %s: %v", cachedThumbnailPath, err)
 			return
 		}
 
+		// convert to paintable as image.SetFromPixbuf is deprecated
 		paintable := gdk.NewTextureForPixbuf(pixbuf)
 
 		// Update the gtk.Image widget on the main GTK thread
 		glib.IdleAdd(func() {
 			targetImage.SetFromPaintable(paintable)
-			targetImage.SetPixelSize(pixelSize) // Set the pixel size for the image
-			targetImage.SetHAlign(gtk.AlignCenter)
-			targetImage.SetVAlign(gtk.AlignCenter)
-			targetImage.SetMarginTop(10)
-			targetImage.SetMarginBottom(10)
-			targetImage.SetMarginStart(10)
-			targetImage.SetMarginEnd(10)
-			targetImage.SetVisible(true) // Make sure the image is visible
+			targetImage.SetPixelSize(pixelSize)
 		})
 	}()
+}
+
+func attachContextMenu(imageWidget *gtk.Overlay, wallpaperName string, isFavorite bool, isBroken bool) {
+	actionGroup := gio.NewSimpleActionGroup()
+
+	// apply action
+	applyAction := gio.NewSimpleAction("apply", nil)
+	applyAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		log.Println("Applying wallpaper:", wallpaperName)
+		wallpaperDir := Config.Constants.WallpaperEngineDir
+		fullWallpaperPath := path.Join(wallpaperDir, wallpaperName)
+		applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
+	})
+	actionGroup.AddAction(&applyAction.Action)
+
+	// toggle_favorite action
+	toggleFavoriteAction := gio.NewSimpleAction("toggle_favorite", nil)
+	toggleFavoriteAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		if isFavorite {
+			log.Printf("Removing %s from favorites", wallpaperName)
+			Config.SavedUIState.Favorites = slices.Delete(Config.SavedUIState.Favorites, slices.Index(Config.SavedUIState.Favorites, wallpaperName), slices.Index(Config.SavedUIState.Favorites, wallpaperName)+1)
+		} else {
+			log.Printf("Adding %s to favorites", wallpaperName)
+			Config.SavedUIState.Favorites = append(Config.SavedUIState.Favorites, wallpaperName)
+		}
+	})
+	actionGroup.AddAction(&toggleFavoriteAction.Action)
+
+	// toggle_broken action
+	toggleBrokenAction := gio.NewSimpleAction("toggle_broken", nil)
+	toggleBrokenAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		if isBroken {
+			log.Printf("Marking %s as not broken", wallpaperName)
+			Config.SavedUIState.Broken = slices.Delete(Config.SavedUIState.Broken, slices.Index(Config.SavedUIState.Broken, wallpaperName), slices.Index(Config.SavedUIState.Broken, wallpaperName)+1)
+		} else {
+			log.Printf("Marking %s as broken", wallpaperName)
+			Config.SavedUIState.Broken = append(Config.SavedUIState.Broken, wallpaperName)
+		}
+	})
+	actionGroup.AddAction(&toggleBrokenAction.Action)
+
+	// open_directory action
+	openDirectoryAction := gio.NewSimpleAction("open_directory", nil)
+	openDirectoryAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		log.Printf("Opening directory for %s\n", wallpaperName)
+		wallpaperDir := Config.Constants.WallpaperEngineDir
+		fullPath := path.Join(wallpaperDir, wallpaperName)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			log.Printf("Wallpaper directory does not exist: %s", fullPath)
+			return
+		}
+		cmd := exec.Command("xdg-open", fullPath)
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setsid: true, // run in a new session
+		}
+		devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+		if err != nil {
+			log.Printf("Warning: Could not open /dev/null for detaching process I/O: %v", err)
+		} else {
+			cmd.Stdin = devNull
+			cmd.Stdout = devNull
+			cmd.Stderr = devNull
+			defer devNull.Close()
+		}
+		err = cmd.Start()
+		if err != nil {
+			log.Printf("Error opening directory %s: %v", fullPath, err)
+			return
+		}
+		log.Printf("Opened directory for wallpaper %s: %s", wallpaperName, fullPath)
+	})
+	actionGroup.AddAction(&openDirectoryAction.Action)
+
+	imageWidget.InsertActionGroup(wallpaperName, actionGroup)
+
+	gesture := gtk.NewGestureClick()
+	gesture.SetButton(3)
+	imageWidget.AddController(gesture)
+	gesture.ConnectReleased(func(nPress int, x, y float64) {
+		if nPress == 1 { // ensure single click
+			// context menu for the image
+			contextMenuModel := gio.NewMenu()
+
+			contextMenuModel.Append("Apply Wallpaper", wallpaperName + ".apply")
+			if isFavorite {
+				contextMenuModel.Append("Remove from Favorites", wallpaperName + ".toggle_favorite")
+			} else {
+				contextMenuModel.Append("Add to Favorites", wallpaperName + ".toggle_favorite")
+			}
+			if isBroken {
+				contextMenuModel.Append("Mark as Not Broken", wallpaperName + ".toggle_broken")
+			} else {
+				contextMenuModel.Append("Mark as Broken", wallpaperName + ".toggle_broken")
+			}
+			contextMenuModel.Append("Open Wallpaper Directory", wallpaperName + ".open_directory")
+
+			contextMenu := gtk.NewPopoverMenuFromModel(contextMenuModel)
+			contextMenu.SetParent(imageWidget)
+
+			// makes the popover appear at the clicked position
+			rect := gdk.NewRectangle(int(x), int(y), 1, 1)
+			contextMenu.SetPointingTo(&rect)
+
+			// makes the popover appear at the bottom of the cursor
+			contextMenu.SetPosition(gtk.PosBottom) 
+			contextMenu.SetHasArrow(true) 
+
+			contextMenu.Popup()
+		}
+	})
+
+	log.Println("Context menu attached to image widget for wallpaper:", wallpaperName)
 }
 
 func activate(app *gtk.Application) {
@@ -437,7 +552,7 @@ func activate(app *gtk.Application) {
 	volumeLabel.SetHAlign(gtk.AlignCenter)
 	volumeLabel.SetVAlign(gtk.AlignCenter)
 	volumeSlider := gtk.NewScaleWithRange(gtk.OrientationHorizontal, 0, 100, 1)
-	volumeSlider.SetValue(float64(Config.SavedUIState.Volume)) // Default volume to 100%
+	volumeSlider.SetValue(float64(Config.SavedUIState.Volume))
 	volumeSlider.SetHExpand(true)
 	volumeSlider.SetVExpand(false)
 	volumeSlider.SetHAlign(gtk.AlignCenter)
@@ -482,18 +597,51 @@ func activate(app *gtk.Application) {
 
 	flowBox.Connect("child-activated", func(box *gtk.FlowBox, child *gtk.FlowBoxChild) {
 		if child == nil {
-			return // No child selected (though this is unlikely for 'child-activated')
+			return
 		}
 		// Retrieve the wallpaper name from the tooltip text of the activated image
-		wallpaperName := child.Child().(*gtk.Image).TooltipText()
+		wallpaperName := child.Child().(*gtk.Overlay).Child().(*gtk.Image).TooltipText()
 		if wallpaperName == "" {
 			log.Println("[WARN] No wallpaper name found for the activated child.")
 			return
 		}
 		log.Println("Applying wallpaper:", wallpaperName)
-		// Here you would add the code to apply the wallpaper, e.g.:
-		fullWallpaperPath := path.Join(wallpaperDir, wallpaperName) // You might need to refine how you get the full path if wallpaperName is just the directory name
+		fullWallpaperPath := path.Join(wallpaperDir, wallpaperName) 
 		applyWallpaper(fullWallpaperPath, volumeSlider.Value())
+	})
+
+	if len(wallpapers) == 0 {
+		// Display error message if no wallpapers are found
+		errorLabel := gtk.NewLabel("No wallpapers found in the directory: " + wallpaperDir)
+		errorLabel.SetHExpand(true)
+		errorLabel.SetVExpand(true)
+		errorLabel.SetHAlign(gtk.AlignCenter)
+		errorLabel.SetVAlign(gtk.AlignCenter)
+		window.SetChild(errorLabel) // Set the error label as the sole child
+		window.SetVisible(true)
+		return // Exit activation function
+	}
+
+	// put favorites first
+	sort.SliceStable(wallpapers, func(i, j int) bool {
+		// sort favorites first
+		if slices.Contains(Config.SavedUIState.Favorites, wallpapers[i].Name()) && !slices.Contains(Config.SavedUIState.Favorites, wallpapers[j].Name()) {
+			return true // i is a favorite, j is not
+		} else {
+			return false // i is not a favorite, j is a favorite or both are not favorites
+		}
+	})
+
+	// put broken wallpapers at the end
+	sort.SliceStable(wallpapers, func(i, j int) bool {
+		// sort broken wallpapers last
+		if slices.Contains(Config.SavedUIState.Broken, wallpapers[i].Name()) && !slices.Contains(Config.SavedUIState.Broken, wallpapers[j].Name()) {
+			return false // i is broken, j is not
+		} else if !slices.Contains(Config.SavedUIState.Broken, wallpapers[i].Name()) && slices.Contains(Config.SavedUIState.Broken, wallpapers[j].Name()) {
+			return true // i is not broken, j is broken
+		} else {
+			return false // both are either broken or not broken, keep original order
+		}
 	})
 
 	for _, wallpaper := range wallpapers {
@@ -507,7 +655,7 @@ func activate(app *gtk.Application) {
 			var imageFile string
 			for _, file := range imageFiles {
 				if file.IsDir() {
-					continue // Skip directories
+					continue // Skip sub-directories
 				}
 				if file.Name() == "preview.jpg" || file.Name() == "preview.png" || file.Name() == "preview.gif" {
 					imageFile = path.Join(wallpaperDir, wallpaper.Name(), file.Name())
@@ -520,8 +668,12 @@ func activate(app *gtk.Application) {
 				continue // Skip this wallpaper if no preview image is found
 			}
 
+			isFavorite := slices.Contains(Config.SavedUIState.Favorites, wallpaper.Name())
+			isBroken := slices.Contains(Config.SavedUIState.Broken, wallpaper.Name())
+
+			iconOverlay := gtk.NewOverlay() // in case we want to add an icon overlay later
 			imageWidget := gtk.NewImageFromIconName("image-x-generic-symbolic")
-			imageWidget.SetPixelSize(128) // Set a fixed size for the image
+			imageWidget.SetPixelSize(128)
 			imageWidget.SetHAlign(gtk.AlignCenter)
 			imageWidget.SetVAlign(gtk.AlignCenter)
 			imageWidget.SetMarginTop(10)
@@ -529,8 +681,29 @@ func activate(app *gtk.Application) {
 			imageWidget.SetMarginStart(10)
 			imageWidget.SetMarginEnd(10)
 			imageWidget.SetTooltipText(wallpaper.Name())
-			flowBox.Append(imageWidget)
 
+			if isFavorite {
+				// if the wallpaper is a favorite, add a star icon to the top right of the image
+				favoriteIcon := gtk.NewImageFromIconName("emote-love-symbolic")
+				favoriteIcon.SetPixelSize(16)
+				favoriteIcon.SetHAlign(gtk.AlignEnd)
+				favoriteIcon.SetVAlign(gtk.AlignStart)
+				iconOverlay.AddOverlay(favoriteIcon)
+			}
+			if isBroken {
+				// if the wallpaper is marked as broken, add a warning icon to the top right of the image
+				warningIcon := gtk.NewImageFromIconName("dialog-warning-symbolic")
+				warningIcon.SetPixelSize(16)
+				warningIcon.SetHAlign(gtk.AlignEnd)
+				warningIcon.SetVAlign(gtk.AlignStart)
+				iconOverlay.AddOverlay(warningIcon)
+			}
+
+			iconOverlay.SetChild(imageWidget)
+
+			attachContextMenu(iconOverlay, wallpaper.Name(), isFavorite, isBroken)
+
+			flowBox.Append(iconOverlay)
 			loadImageAsync(imageFile, imageWidget, 128)
 		}
 	}
