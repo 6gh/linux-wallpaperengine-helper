@@ -247,7 +247,7 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 	}
 
 	cacheScreenshot := ""
-	if Config.PostProcessing.Enabled {
+	if Config.PostProcessing.Enabled && Config.PostProcessing.ScreenshotFile != "" {
 		cacheScreenshot = Config.PostProcessing.ScreenshotFile // ~/.cache/linux-wallpaperengine-helper/screenshot.png
 
 		cmd += " --screenshot " + cacheScreenshot
