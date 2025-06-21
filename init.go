@@ -72,6 +72,8 @@ func NewDefaultConfig(configDir string) *ConfigStruct {
 
 var Config *ConfigStruct
 var cacheDir string
+var flowBox *gtk.FlowBox
+var window *gtk.ApplicationWindow
 
 func main() {
 	app := gtk.NewApplication("dev._6gh.linux-wallpaperengine-helper", gio.ApplicationFlagsNone)
@@ -418,167 +420,8 @@ func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 	}()
 }
 
-func attachContextMenu(imageWidget *gtk.Overlay, wallpaperName string, isFavorite bool, isBroken bool) {
-	actionGroup := gio.NewSimpleActionGroup()
-
-	// apply action
-	applyAction := gio.NewSimpleAction("apply", nil)
-	applyAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
-		log.Println("Applying wallpaper:", wallpaperName)
-		wallpaperDir := Config.Constants.WallpaperEngineDir
-		fullWallpaperPath := path.Join(wallpaperDir, wallpaperName)
-		applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
-	})
-	actionGroup.AddAction(&applyAction.Action)
-
-	// toggle_favorite action
-	toggleFavoriteAction := gio.NewSimpleAction("toggle_favorite", nil)
-	toggleFavoriteAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
-		if isFavorite {
-			log.Printf("Removing %s from favorites", wallpaperName)
-			Config.SavedUIState.Favorites = slices.Delete(Config.SavedUIState.Favorites, slices.Index(Config.SavedUIState.Favorites, wallpaperName), slices.Index(Config.SavedUIState.Favorites, wallpaperName)+1)
-		} else {
-			log.Printf("Adding %s to favorites", wallpaperName)
-			Config.SavedUIState.Favorites = append(Config.SavedUIState.Favorites, wallpaperName)
-		}
-	})
-	actionGroup.AddAction(&toggleFavoriteAction.Action)
-
-	// toggle_broken action
-	toggleBrokenAction := gio.NewSimpleAction("toggle_broken", nil)
-	toggleBrokenAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
-		if isBroken {
-			log.Printf("Marking %s as not broken", wallpaperName)
-			Config.SavedUIState.Broken = slices.Delete(Config.SavedUIState.Broken, slices.Index(Config.SavedUIState.Broken, wallpaperName), slices.Index(Config.SavedUIState.Broken, wallpaperName)+1)
-		} else {
-			log.Printf("Marking %s as broken", wallpaperName)
-			Config.SavedUIState.Broken = append(Config.SavedUIState.Broken, wallpaperName)
-		}
-	})
-	actionGroup.AddAction(&toggleBrokenAction.Action)
-
-	// open_directory action
-	openDirectoryAction := gio.NewSimpleAction("open_directory", nil)
-	openDirectoryAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
-		log.Printf("Opening directory for %s\n", wallpaperName)
-		wallpaperDir := Config.Constants.WallpaperEngineDir
-		fullPath := path.Join(wallpaperDir, wallpaperName)
-		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			log.Printf("Wallpaper directory does not exist: %s", fullPath)
-			return
-		}
-		cmd := exec.Command("xdg-open", fullPath)
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setsid: true, // run in a new session
-		}
-		devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-		if err != nil {
-			log.Printf("Warning: Could not open /dev/null for detaching process I/O: %v", err)
-		} else {
-			cmd.Stdin = devNull
-			cmd.Stdout = devNull
-			cmd.Stderr = devNull
-			defer devNull.Close()
-		}
-		err = cmd.Start()
-		if err != nil {
-			log.Printf("Error opening directory %s: %v", fullPath, err)
-			return
-		}
-		log.Printf("Opened directory for wallpaper %s: %s", wallpaperName, fullPath)
-	})
-	actionGroup.AddAction(&openDirectoryAction.Action)
-
-	imageWidget.InsertActionGroup(wallpaperName, actionGroup)
-
-	gesture := gtk.NewGestureClick()
-	gesture.SetButton(3)
-	imageWidget.AddController(gesture)
-	gesture.ConnectReleased(func(nPress int, x, y float64) {
-		if nPress == 1 { // ensure single click
-			// context menu for the image
-			contextMenuModel := gio.NewMenu()
-
-			contextMenuModel.Append("Apply Wallpaper", wallpaperName + ".apply")
-			if isFavorite {
-				contextMenuModel.Append("Remove from Favorites", wallpaperName + ".toggle_favorite")
-			} else {
-				contextMenuModel.Append("Add to Favorites", wallpaperName + ".toggle_favorite")
-			}
-			if isBroken {
-				contextMenuModel.Append("Mark as Not Broken", wallpaperName + ".toggle_broken")
-			} else {
-				contextMenuModel.Append("Mark as Broken", wallpaperName + ".toggle_broken")
-			}
-			contextMenuModel.Append("Open Wallpaper Directory", wallpaperName + ".open_directory")
-
-			contextMenu := gtk.NewPopoverMenuFromModel(contextMenuModel)
-			contextMenu.SetParent(imageWidget)
-
-			// makes the popover appear at the clicked position
-			rect := gdk.NewRectangle(int(x), int(y), 1, 1)
-			contextMenu.SetPointingTo(&rect)
-
-			// makes the popover appear at the bottom of the cursor
-			contextMenu.SetPosition(gtk.PosBottom) 
-			contextMenu.SetHasArrow(true) 
-
-			contextMenu.Popup()
-		}
-	})
-
-	log.Println("Context menu attached to image widget for wallpaper:", wallpaperName)
-}
-
-func activate(app *gtk.Application) {
-	window := gtk.NewApplicationWindow(app)
-	window.SetTitle("linux-wallpaperengine Helper")
-
-	// make the bottom controls 
-	controlBar := gtk.NewBox(gtk.OrientationHorizontal, 0)
-	controlBar.SetHAlign(gtk.AlignCenter)
-	controlBar.SetVAlign(gtk.AlignEnd)
-	controlBar.SetMarginTop(10)
-	controlBar.SetMarginBottom(10)
-	controlBar.SetMarginStart(10)
-	controlBar.SetMarginEnd(10)
-
-	// volume control
-	volumeContainer := gtk.NewBox(gtk.OrientationVertical, 0)
-	volumeContainer.SetHExpand(true)
-	volumeContainer.SetHAlign(gtk.AlignStart)
-	volumeContainer.SetVAlign(gtk.AlignCenter)
-	volumeLabel := gtk.NewLabel("Volume: " + strconv.FormatInt(Config.SavedUIState.Volume, 10) + "%")
-	volumeLabel.SetHAlign(gtk.AlignCenter)
-	volumeLabel.SetVAlign(gtk.AlignCenter)
-	volumeSlider := gtk.NewScaleWithRange(gtk.OrientationHorizontal, 0, 100, 1)
-	volumeSlider.SetValue(float64(Config.SavedUIState.Volume))
-	volumeSlider.SetHExpand(true)
-	volumeSlider.SetVExpand(false)
-	volumeSlider.SetHAlign(gtk.AlignCenter)
-	volumeSlider.SetVAlign(gtk.AlignCenter)
-	volumeSlider.SetSizeRequest(200, -1)
-	volumeSlider.Connect("value-changed", func(slider *gtk.Scale) {
-		value := slider.Value()
-		volumeLabel.SetLabel("Volume: " + strconv.FormatFloat(value, 'f', 0, 64) + "%")
-		Config.SavedUIState.Volume = int64(value)
-	})
-	volumeContainer.Append(volumeLabel)
-	volumeContainer.Append(volumeSlider)
-	controlBar.Append(volumeContainer)
-
-	flowBox := gtk.NewFlowBox()
-	flowBox.SetSelectionMode(gtk.SelectionSingle)
-	flowBox.SetHomogeneous(true)
-	flowBox.SetColumnSpacing(12)
-	flowBox.SetRowSpacing(12)
-	flowBox.SetMaxChildrenPerLine(8)
-	flowBox.SetHAlign(gtk.AlignCenter)
-	flowBox.SetVAlign(gtk.AlignStart)
-	flowBox.SetMarginTop(10)
-	flowBox.SetMarginBottom(10)
-	flowBox.SetMarginStart(10)
-	flowBox.SetMarginEnd(10)
+func refreshImages() {
+	flowBox.RemoveAll()
 
 	// get all wallpapers from the wallpaperengine directory
 	wallpaperDir := Config.Constants.WallpaperEngineDir
@@ -607,7 +450,7 @@ func activate(app *gtk.Application) {
 		}
 		log.Println("Applying wallpaper:", wallpaperName)
 		fullWallpaperPath := path.Join(wallpaperDir, wallpaperName) 
-		applyWallpaper(fullWallpaperPath, volumeSlider.Value())
+		applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
 	})
 
 	if len(wallpapers) == 0 {
@@ -707,6 +550,186 @@ func activate(app *gtk.Application) {
 			loadImageAsync(imageFile, imageWidget, 128)
 		}
 	}
+}
+
+func attachContextMenu(imageWidget *gtk.Overlay, wallpaperName string, isFavorite bool, isBroken bool) {
+	actionGroup := gio.NewSimpleActionGroup()
+
+	// apply action
+	applyAction := gio.NewSimpleAction("apply", nil)
+	applyAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		log.Println("Applying wallpaper:", wallpaperName)
+		wallpaperDir := Config.Constants.WallpaperEngineDir
+		fullWallpaperPath := path.Join(wallpaperDir, wallpaperName)
+		applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
+	})
+	actionGroup.AddAction(&applyAction.Action)
+
+	// toggle_favorite action
+	toggleFavoriteAction := gio.NewSimpleAction("toggle_favorite", nil)
+	toggleFavoriteAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		if isFavorite {
+			log.Printf("Removing %s from favorites", wallpaperName)
+			Config.SavedUIState.Favorites = slices.Delete(Config.SavedUIState.Favorites, slices.Index(Config.SavedUIState.Favorites, wallpaperName), slices.Index(Config.SavedUIState.Favorites, wallpaperName)+1)
+		} else {
+			log.Printf("Adding %s to favorites", wallpaperName)
+			Config.SavedUIState.Favorites = append(Config.SavedUIState.Favorites, wallpaperName)
+		}
+
+		refreshImages()
+	})
+	actionGroup.AddAction(&toggleFavoriteAction.Action)
+
+	// toggle_broken action
+	toggleBrokenAction := gio.NewSimpleAction("toggle_broken", nil)
+	toggleBrokenAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		if isBroken {
+			log.Printf("Marking %s as not broken", wallpaperName)
+			Config.SavedUIState.Broken = slices.Delete(Config.SavedUIState.Broken, slices.Index(Config.SavedUIState.Broken, wallpaperName), slices.Index(Config.SavedUIState.Broken, wallpaperName)+1)
+		} else {
+			log.Printf("Marking %s as broken", wallpaperName)
+			Config.SavedUIState.Broken = append(Config.SavedUIState.Broken, wallpaperName)
+		}
+
+		refreshImages()
+	})
+	actionGroup.AddAction(&toggleBrokenAction.Action)
+
+	// open_directory action
+	openDirectoryAction := gio.NewSimpleAction("open_directory", nil)
+	openDirectoryAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		log.Printf("Opening directory for %s\n", wallpaperName)
+		wallpaperDir := Config.Constants.WallpaperEngineDir
+		fullPath := path.Join(wallpaperDir, wallpaperName)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			log.Printf("Wallpaper directory does not exist: %s", fullPath)
+			return
+		}
+		cmd := exec.Command("xdg-open", fullPath)
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setsid: true, // run in a new session
+		}
+		devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+		if err != nil {
+			log.Printf("Warning: Could not open /dev/null for detaching process I/O: %v", err)
+		} else {
+			cmd.Stdin = devNull
+			cmd.Stdout = devNull
+			cmd.Stderr = devNull
+			defer devNull.Close()
+		}
+		err = cmd.Start()
+		if err != nil {
+			log.Printf("Error opening directory %s: %v", fullPath, err)
+			return
+		}
+		log.Printf("Opened directory for wallpaper %s: %s", wallpaperName, fullPath)
+	})
+	actionGroup.AddAction(&openDirectoryAction.Action)
+
+	imageWidget.InsertActionGroup(wallpaperName, actionGroup)
+
+	gesture := gtk.NewGestureClick()
+	gesture.SetButton(3)
+	imageWidget.AddController(gesture)
+	gesture.ConnectReleased(func(nPress int, x, y float64) {
+		if nPress == 1 { // ensure single click
+			// context menu for the image
+			contextMenuModel := gio.NewMenu()
+
+			contextMenuModel.Append("Apply Wallpaper", wallpaperName + ".apply")
+			if isFavorite {
+				contextMenuModel.Append("Remove from Favorites", wallpaperName + ".toggle_favorite")
+			} else {
+				contextMenuModel.Append("Add to Favorites", wallpaperName + ".toggle_favorite")
+			}
+			if isBroken {
+				contextMenuModel.Append("Mark as Not Broken", wallpaperName + ".toggle_broken")
+			} else {
+				contextMenuModel.Append("Mark as Broken", wallpaperName + ".toggle_broken")
+			}
+			contextMenuModel.Append("Open Wallpaper Directory", wallpaperName + ".open_directory")
+
+			contextMenu := gtk.NewPopoverMenuFromModel(contextMenuModel)
+			contextMenu.SetParent(imageWidget)
+
+			// makes the popover appear at the clicked position
+			rect := gdk.NewRectangle(int(x), int(y), 1, 1)
+			contextMenu.SetPointingTo(&rect)
+
+			// makes the popover appear at the bottom of the cursor
+			contextMenu.SetPosition(gtk.PosBottom) 
+			contextMenu.SetHasArrow(true) 
+
+			contextMenu.Popup()
+		}
+	})
+
+	log.Println("Context menu attached to image widget for wallpaper:", wallpaperName)
+}
+
+func activate(app *gtk.Application) {
+	window = gtk.NewApplicationWindow(app)
+	window.SetTitle("linux-wallpaperengine Helper")
+
+	flowBox = gtk.NewFlowBox()
+	flowBox.SetSelectionMode(gtk.SelectionSingle)
+	flowBox.SetHomogeneous(true)
+	flowBox.SetColumnSpacing(12)
+	flowBox.SetRowSpacing(12)
+	flowBox.SetMaxChildrenPerLine(8)
+	flowBox.SetHAlign(gtk.AlignCenter)
+	flowBox.SetVAlign(gtk.AlignStart)
+	flowBox.SetMarginTop(10)
+	flowBox.SetMarginBottom(10)
+	flowBox.SetMarginStart(10)
+	flowBox.SetMarginEnd(10)
+
+	// make the bottom controls 
+	controlBar := gtk.NewBox(gtk.OrientationHorizontal, 0)
+	controlBar.SetHAlign(gtk.AlignCenter)
+	controlBar.SetVAlign(gtk.AlignEnd)
+	controlBar.SetMarginTop(10)
+	controlBar.SetMarginBottom(10)
+	controlBar.SetMarginStart(10)
+	controlBar.SetMarginEnd(10)
+
+	// refresh button
+	refreshButton := gtk.NewButtonWithLabel("Refresh")
+	refreshButton.SetHExpand(false)
+	refreshButton.SetHAlign(gtk.AlignStart)
+	refreshButton.SetVAlign(gtk.AlignCenter)
+	refreshButton.Connect("clicked", func() {
+		log.Println("Refreshing wallpapers...")
+		refreshImages()
+	})
+	controlBar.Append(refreshButton)
+
+	// volume control
+	volumeContainer := gtk.NewBox(gtk.OrientationVertical, 0)
+	volumeContainer.SetHExpand(true)
+	volumeContainer.SetHAlign(gtk.AlignStart)
+	volumeContainer.SetVAlign(gtk.AlignCenter)
+	volumeLabel := gtk.NewLabel("Volume: " + strconv.FormatInt(Config.SavedUIState.Volume, 10) + "%")
+	volumeLabel.SetHAlign(gtk.AlignCenter)
+	volumeLabel.SetVAlign(gtk.AlignCenter)
+	volumeSlider := gtk.NewScaleWithRange(gtk.OrientationHorizontal, 0, 100, 1)
+	volumeSlider.SetValue(float64(Config.SavedUIState.Volume))
+	volumeSlider.SetHExpand(true)
+	volumeSlider.SetVExpand(false)
+	volumeSlider.SetHAlign(gtk.AlignCenter)
+	volumeSlider.SetVAlign(gtk.AlignCenter)
+	volumeSlider.SetSizeRequest(200, -1)
+	volumeSlider.Connect("value-changed", func(slider *gtk.Scale) {
+		value := slider.Value()
+		volumeLabel.SetLabel("Volume: " + strconv.FormatFloat(value, 'f', 0, 64) + "%")
+		Config.SavedUIState.Volume = int64(value)
+	})
+	volumeContainer.Append(volumeLabel)
+	volumeContainer.Append(volumeSlider)
+	controlBar.Append(volumeContainer)
+
+	refreshImages()
 
 	scrolledWindow := gtk.NewScrolledWindow()
 	scrolledWindow.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
