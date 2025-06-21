@@ -5,6 +5,7 @@ import (
 	_ "image/gif"  // For gif decoder
 	_ "image/jpeg" // For jpeg decoder
 	_ "image/png"  // For png decoder
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -39,9 +40,10 @@ type PostProcessingStruct struct {
 }
 
 type SavedUIStateStruct struct {
-	Broken    []string `toml:"broken"`    // user marked as "broken"; can be hidden from UI or shown at the end of the list
-	Favorites []string `toml:"favorites"` // user marked as "favorite"; shown at the top of the list
-	Volume    int64 `toml:"volume"`       // the volume level for the wallpaper engine, 0-100; 0 = --silent, > 0 = --volume <value>
+	Broken     []string `toml:"broken"`    // user marked as "broken"; can be hidden from UI or shown at the end of the list
+	Favorites  []string `toml:"favorites"` // user marked as "favorite"; shown at the top of the list
+	HideBroken bool   `toml:"hide_broken"` // whether to hide broken wallpapers from the UI
+	Volume     int64 `toml:"volume"`       // the volume level for the wallpaper engine, 0-100; 0 = --silent, > 0 = --volume <value>
 }
 
 type ConfigStruct struct {
@@ -65,6 +67,7 @@ func NewDefaultConfig(configDir string) *ConfigStruct {
 		SavedUIState: SavedUIStateStruct{
 			Broken:    []string{},
 			Favorites: []string{},
+			HideBroken: false,
 			Volume: 100,
 		},
 	}
@@ -483,17 +486,31 @@ func refreshImages() {
 		}
 	})
 
-	// put broken wallpapers at the end
-	sort.SliceStable(wallpapers, func(i, j int) bool {
-		// sort broken wallpapers last
-		if slices.Contains(Config.SavedUIState.Broken, wallpapers[i].Name()) && !slices.Contains(Config.SavedUIState.Broken, wallpapers[j].Name()) {
-			return false // i is broken, j is not
-		} else if !slices.Contains(Config.SavedUIState.Broken, wallpapers[i].Name()) && slices.Contains(Config.SavedUIState.Broken, wallpapers[j].Name()) {
-			return true // i is not broken, j is broken
-		} else {
-			return false // both are either broken or not broken, keep original order
-		}
-	})
+	if Config.SavedUIState.HideBroken {
+		// filter out broken wallpapers if hideBroken is true
+		wallpapers = func() []fs.DirEntry {
+			filtered := make([]fs.DirEntry, 0, len(wallpapers))
+			for _, wallpaper := range wallpapers {
+				if !slices.Contains(Config.SavedUIState.Broken, wallpaper.Name()) {
+					filtered = append(filtered, wallpaper)
+				}
+			}
+			return filtered
+		}()
+	} else {
+		// put broken wallpapers at the end
+		sort.SliceStable(wallpapers, func(i, j int) bool {
+			// sort broken wallpapers last
+			if slices.Contains(Config.SavedUIState.Broken, wallpapers[i].Name()) && !slices.Contains(Config.SavedUIState.Broken, wallpapers[j].Name()) {
+				return false // i is broken, j is not
+			} else if !slices.Contains(Config.SavedUIState.Broken, wallpapers[i].Name()) && slices.Contains(Config.SavedUIState.Broken, wallpapers[j].Name()) {
+				return true // i is not broken, j is broken
+			} else {
+				return false // both are either broken or not broken, keep original order
+			}
+		})
+	}
+
 
 	for _, wallpaper := range wallpapers {
 		if wallpaper.IsDir() {
