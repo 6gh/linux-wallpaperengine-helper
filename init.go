@@ -74,6 +74,7 @@ var Config *ConfigStruct
 var cacheDir string
 var flowBox *gtk.FlowBox
 var window *gtk.ApplicationWindow
+var imageClickSignalHandlers []glib.SignalHandle
 
 func main() {
 	app := gtk.NewApplication("dev._6gh.linux-wallpaperengine-helper", gio.ApplicationFlagsNone)
@@ -422,6 +423,12 @@ func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 
 func refreshImages() {
 	flowBox.RemoveAll()
+	// remove all previous child-activated signal handlers
+	// else we would have multiple handlers for the same signal
+	// causing multiple wallpapers to be applied on click
+	for _, id := range imageClickSignalHandlers {
+		flowBox.HandlerDisconnect(id)
+	}
 
 	// get all wallpapers from the wallpaperengine directory
 	wallpaperDir := Config.Constants.WallpaperEngineDir
@@ -438,7 +445,7 @@ func refreshImages() {
 		return // Exit activation function
 	}
 
-	flowBox.Connect("child-activated", func(box *gtk.FlowBox, child *gtk.FlowBoxChild) {
+	signalHandler := flowBox.Connect("child-activated", func(box *gtk.FlowBox, child *gtk.FlowBoxChild) {
 		if child == nil {
 			return
 		}
@@ -452,6 +459,7 @@ func refreshImages() {
 		fullWallpaperPath := path.Join(wallpaperDir, wallpaperName) 
 		applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
 	})
+	imageClickSignalHandlers = append(imageClickSignalHandlers, signalHandler)
 
 	if len(wallpapers) == 0 {
 		// Display error message if no wallpapers are found
