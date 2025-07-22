@@ -9,6 +9,7 @@ import (
 )
 
 type ConstantsStruct struct {
+	DiscardProcessLogs       bool   `toml:"discard_process_logs"      comment:"Whether to pipe detached processes' logs to /dev/null"`
 	LinuxWallpaperEngineBin  string `toml:"linux_wallpaperengine_bin" comment:"The absolute path to the binary, in case the binary isn't in PATH"`
 	WallpaperEngineDir       string `toml:"wallpaper_engine_dir"      comment:"The absolute path to the workshop content directory of Wallpaper Engine; where the wallpapers are stored"`
 	WallpaperEngineAssets    string `toml:"wallpaper_engine_assets"   comment:"The absolute path to the assets directory of Wallpaper Engine; https://github.com/Almamu/linux-wallpaperengine#1-get-wallpaper-engine-assets"`
@@ -30,14 +31,15 @@ type SavedUIStateStruct struct {
 }
 
 type ConfigStruct struct {
-	Constants ConstantsStruct `toml:"Constants"`
+	Constants      ConstantsStruct      `toml:"Constants"`
 	PostProcessing PostProcessingStruct `toml:"PostProcessing"`
-	SavedUIState SavedUIStateStruct `toml:"SavedUIState"`
+	SavedUIState   SavedUIStateStruct   `toml:"SavedUIState"`
 }
 
 func NewDefaultConfig(configDir string) *ConfigStruct {
 	return &ConfigStruct{
 		Constants: ConstantsStruct{
+			DiscardProcessLogs:       true,
 			LinuxWallpaperEngineBin:  "linux-wallpaperengine",
 			WallpaperEngineDir:       path.Join(os.Getenv("HOME"), ".steam", "steam", "steamapps", "workshop", "content", "431960"),
 			WallpaperEngineAssets:    "",

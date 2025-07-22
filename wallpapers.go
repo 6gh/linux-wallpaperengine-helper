@@ -87,7 +87,7 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 		// set swww wallpaper if enabled
 		if Config.PostProcessing.SetSWWW {
 			log.Printf("Set swww is enabled, running swww img command")
-			pid, err := runDetachedProcess("swww", "img", cacheScreenshot)
+			pid, err := runDetachedProcess("sleep", "2s", "&&", "swww", "img", cacheScreenshot)
 			if err != nil {
 				log.Printf("Error starting swww command: %v", err)
 				return false // exit if we cannot start the swww command, to prevent multiple instances taking up resources
