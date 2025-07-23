@@ -8,16 +8,12 @@ import (
 	"os"
 	"path"
 
-	"github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
 var Config *ConfigStruct
 var CacheDir string
-var FlowBox *gtk.FlowBox
-var Window *gtk.ApplicationWindow
-var ImageClickSignalHandlers []glib.SignalHandle
 
 func main() {
 	// ensure ~/.config/linux-wallpaperengine-helper

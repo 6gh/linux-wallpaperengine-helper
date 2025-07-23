@@ -10,7 +10,6 @@ import (
 
 func getRunningProcessPids(processName string) ([]string, error) {
 	cmd := exec.Command("pidof", processName)
-	// if error code is 1, the process is not running
 	output, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
@@ -18,7 +17,6 @@ func getRunningProcessPids(processName string) ([]string, error) {
 		}
 		return []string{}, err 
 	}
-	// If output is not empty, return the pids
 	if strings.TrimSpace(string(output)) != "" {
 		pids := strings.Fields(string(output))
 		log.Printf("Process '%s' is running with PIDs: %v", processName, pids)

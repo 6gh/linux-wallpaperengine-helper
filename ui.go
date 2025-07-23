@@ -40,6 +40,9 @@ type ProjectJSON struct {
 }
 
 var WallpaperItems []WallpaperItem
+var ImageClickSignalHandlers []glib.SignalHandle
+var FlowBox *gtk.FlowBox
+var Window *gtk.ApplicationWindow
 
 func activate(app *gtk.Application) {
 	Window = gtk.NewApplicationWindow(app)
@@ -80,7 +83,7 @@ func activate(app *gtk.Application) {
 	refreshButton.SetVAlign(gtk.AlignCenter)
 	refreshButton.Connect("clicked", func() {
 		log.Println("Refreshing wallpapers...")
-		refreshImages()
+		refreshWallpaperItems()
 	})
 	topControlBar.Append(refreshButton)
 
@@ -108,7 +111,7 @@ func activate(app *gtk.Application) {
 	volumeContainer.Append(volumeSlider)
 	bottomControlBar.Append(volumeContainer)
 
-	refreshImages()
+	refreshWallpaperItems()
 
 	scrolledWindow := gtk.NewScrolledWindow()
 	scrolledWindow.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
@@ -205,9 +208,49 @@ func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 	}()
 }
 
-func refreshImages() {
+func sortWallpaperItems() {
+	// sort by date modified, newest first
+	sort.SliceStable(WallpaperItems, func(i, j int) bool {
+		iModTime := WallpaperItems[i].ModTime
+		jModTime := WallpaperItems[j].ModTime
+		if iModTime.IsZero() || jModTime.IsZero() {
+			log.Printf("Error getting last modified info for wallpaper %s or %s", WallpaperItems[i].WallpaperID, WallpaperItems[j].WallpaperID)
+			return false // keep original order if there's an error
+		}
+		return iModTime.After(jModTime)
+	})
+
+	// put favorites first
+	sort.SliceStable(WallpaperItems, func(i, j int) bool {
+		if WallpaperItems[i].IsFavorite && !WallpaperItems[j].IsFavorite {
+			return true 
+		} else {
+			return false
+		}
+	})
+
+	if Config.SavedUIState.HideBroken {
+		WallpaperItems = slices.DeleteFunc(WallpaperItems, func(item WallpaperItem) bool {
+			return item.IsBroken
+		})
+	} else {
+		// put broken wallpapers at the end
+		sort.SliceStable(WallpaperItems, func(i, j int) bool {
+			if WallpaperItems[i].IsBroken && !WallpaperItems[j].IsBroken {
+				return false
+			} else if !WallpaperItems[i].IsBroken && WallpaperItems[j].IsBroken {
+				return true
+			} else {
+				return false
+			}
+		})
+	}
+}
+
+func refreshWallpaperItems() {
 	FlowBox.RemoveAll()
 	WallpaperItems = []WallpaperItem{}
+
 	// remove all previous child-activated signal handlers
 	// else we would have multiple handlers for the same signal
 	// causing multiple wallpapers to be applied on click
@@ -247,14 +290,14 @@ func refreshImages() {
 		if child == nil {
 			return
 		}
-		// Retrieve the wallpaper name from the tooltip text of the activated image
-		wallpaperName := child.Child().(*gtk.Overlay).Child().(*gtk.Image).Name()
-		if wallpaperName == "" {
-			log.Println("[WARN] No wallpaper name found for the activated child.")
+		// Retrieve the wallpaper ID from the tooltip text of the activated image
+		wallpaperId := child.Child().(*gtk.Overlay).Child().(*gtk.Image).Name()
+		if wallpaperId == "" {
+			log.Println("[WARN] No wallpaper ID found for the activated child.")
 			return
 		}
-		log.Println("Applying wallpaper:", wallpaperName)
-		fullWallpaperPath := path.Join(wallpaperDir, wallpaperName) 
+		log.Println("Applying wallpaper:", wallpaperId)
+		fullWallpaperPath := path.Join(wallpaperDir, wallpaperId) 
 		applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
 	})
 	ImageClickSignalHandlers = append(ImageClickSignalHandlers, signalHandler)
@@ -325,43 +368,7 @@ func refreshImages() {
 		})
 	}
 
-	// sort by date modified, newest first
-	sort.SliceStable(WallpaperItems, func(i, j int) bool {
-		iModTime := WallpaperItems[i].ModTime
-		jModTime := WallpaperItems[j].ModTime
-		if iModTime.IsZero() || jModTime.IsZero() {
-			log.Printf("Error getting last modified info for wallpaper %s or %s", WallpaperItems[i].WallpaperID, WallpaperItems[j].WallpaperID)
-			return false // keep original order if there's an error
-		}
-		return iModTime.After(jModTime)
-	})
-
-	// put favorites first
-	sort.SliceStable(WallpaperItems, func(i, j int) bool {
-		if WallpaperItems[i].IsFavorite && !WallpaperItems[j].IsFavorite {
-			return true 
-		} else {
-			return false
-		}
-	})
-
-	if Config.SavedUIState.HideBroken {
-		WallpaperItems = slices.DeleteFunc(WallpaperItems, func(item WallpaperItem) bool {
-			return item.IsBroken
-		})
-	} else {
-		// put broken wallpapers at the end
-		sort.SliceStable(WallpaperItems, func(i, j int) bool {
-			if WallpaperItems[i].IsBroken && !WallpaperItems[j].IsBroken {
-				return false
-			} else if !WallpaperItems[i].IsBroken && WallpaperItems[j].IsBroken {
-				return true
-			} else {
-				return false
-			}
-		})
-	}
-
+	sortWallpaperItems()
 
 	for _, wallpaperItem := range WallpaperItems {
 		if wallpaperItem.CachedPath != "" {
@@ -396,7 +403,7 @@ func refreshImages() {
 
 			iconOverlay.SetChild(imageWidget)
 
-			attachContextMenu(iconOverlay, wallpaperItem.WallpaperID, wallpaperItem.IsFavorite, wallpaperItem.IsBroken)
+			attachContextMenu(iconOverlay, &wallpaperItem, wallpaperItem.IsFavorite, wallpaperItem.IsBroken)
 
 			FlowBox.Append(iconOverlay)
 			loadImageAsync(wallpaperItem.CachedPath, imageWidget, 128)
@@ -404,15 +411,15 @@ func refreshImages() {
 	}
 }
 
-func attachContextMenu(imageWidget *gtk.Overlay, wallpaperId string, isFavorite bool, isBroken bool) {
+func attachContextMenu(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFavorite bool, isBroken bool) {
 	actionGroup := gio.NewSimpleActionGroup()
 
 	// apply action
 	applyAction := gio.NewSimpleAction("apply", nil)
 	applyAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
-		log.Println("Applying wallpaper:", wallpaperId)
+		log.Println("Applying wallpaper:", wallpaperItem.WallpaperID)
 		wallpaperDir := Config.Constants.WallpaperEngineDir
-		fullWallpaperPath := path.Join(wallpaperDir, wallpaperId)
+		fullWallpaperPath := path.Join(wallpaperDir, wallpaperItem.WallpaperID)
 		applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
 	})
 	actionGroup.AddAction(&applyAction.Action)
@@ -421,14 +428,16 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperId string, isFavorite 
 	toggleFavoriteAction := gio.NewSimpleAction("toggle_favorite", nil)
 	toggleFavoriteAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
 		if isFavorite {
-			log.Printf("Removing %s from favorites", wallpaperId)
-			Config.SavedUIState.Favorites = slices.Delete(Config.SavedUIState.Favorites, slices.Index(Config.SavedUIState.Favorites, wallpaperId), slices.Index(Config.SavedUIState.Favorites, wallpaperId)+1)
+			log.Printf("Removing %s from favorites", wallpaperItem.WallpaperID)
+			wallpaperItem.IsFavorite = false
+			Config.SavedUIState.Favorites = slices.Delete(Config.SavedUIState.Favorites, slices.Index(Config.SavedUIState.Favorites, wallpaperItem.WallpaperID), slices.Index(Config.SavedUIState.Favorites, wallpaperItem.WallpaperID)+1)
 		} else {
-			log.Printf("Adding %s to favorites", wallpaperId)
-			Config.SavedUIState.Favorites = append(Config.SavedUIState.Favorites, wallpaperId)
+			log.Printf("Favoriting %s", wallpaperItem.WallpaperID)
+			wallpaperItem.IsFavorite = true
+			Config.SavedUIState.Favorites = append(Config.SavedUIState.Favorites, wallpaperItem.WallpaperID)
 		}
 
-		refreshImages()
+		refreshWallpaperItems()
 	})
 	actionGroup.AddAction(&toggleFavoriteAction.Action)
 
@@ -436,23 +445,25 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperId string, isFavorite 
 	toggleBrokenAction := gio.NewSimpleAction("toggle_broken", nil)
 	toggleBrokenAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
 		if isBroken {
-			log.Printf("Marking %s as not broken", wallpaperId)
-			Config.SavedUIState.Broken = slices.Delete(Config.SavedUIState.Broken, slices.Index(Config.SavedUIState.Broken, wallpaperId), slices.Index(Config.SavedUIState.Broken, wallpaperId)+1)
+			log.Printf("Marking %s as not broken", wallpaperItem.WallpaperID)
+			wallpaperItem.IsBroken = false
+			Config.SavedUIState.Broken = slices.Delete(Config.SavedUIState.Broken, slices.Index(Config.SavedUIState.Broken, wallpaperItem.WallpaperID), slices.Index(Config.SavedUIState.Broken, wallpaperItem.WallpaperID)+1)
 		} else {
-			log.Printf("Marking %s as broken", wallpaperId)
-			Config.SavedUIState.Broken = append(Config.SavedUIState.Broken, wallpaperId)
+			log.Printf("Marking %s as broken", wallpaperItem.WallpaperID)
+			wallpaperItem.IsBroken = true
+			Config.SavedUIState.Broken = append(Config.SavedUIState.Broken, wallpaperItem.WallpaperID)
 		}
 
-		refreshImages()
+		refreshWallpaperItems()
 	})
 	actionGroup.AddAction(&toggleBrokenAction.Action)
 
 	// open_directory action
 	openDirectoryAction := gio.NewSimpleAction("open_directory", nil)
 	openDirectoryAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
-		log.Printf("Opening directory for %s\n", wallpaperId)
+		log.Printf("Opening directory for %s\n", wallpaperItem)
 		wallpaperDir := Config.Constants.WallpaperEngineDir
-		fullPath := path.Join(wallpaperDir, wallpaperId)
+		fullPath := path.Join(wallpaperDir, wallpaperItem.WallpaperID)
 		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 			log.Printf("Wallpaper directory does not exist: %s", fullPath)
 			return
@@ -462,16 +473,16 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperId string, isFavorite 
 			log.Printf("Error opening directory %s: %v", fullPath, err)
 			return
 		}
-		log.Printf("Opened directory for wallpaper %s: %s", wallpaperId, fullPath)
+		log.Printf("Opened directory for wallpaper %s: %s", wallpaperItem, fullPath)
 	})
 	actionGroup.AddAction(&openDirectoryAction.Action)
 
 	// copy_command action
 	copyCommandAction := gio.NewSimpleAction("copy_command", nil)
 	copyCommandAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
-		log.Printf("Copying command for %s to clipboard", wallpaperId)
+		log.Printf("Copying command for %s to clipboard", wallpaperItem)
 		wallpaperDir := Config.Constants.WallpaperEngineDir
-		fullWallpaperPath := path.Join(wallpaperDir, wallpaperId)
+		fullWallpaperPath := path.Join(wallpaperDir, wallpaperItem.WallpaperID)
 		cmd, _ := createWallpaperCommand(fullWallpaperPath, float64(Config.SavedUIState.Volume))
 		clipboard := gdk.DisplayGetDefault().Clipboard()
 		// if clipboard == nil {
@@ -483,7 +494,7 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperId string, isFavorite 
 	})
 	actionGroup.AddAction(&copyCommandAction.Action)
 
-	imageWidget.InsertActionGroup(wallpaperId, actionGroup)
+	imageWidget.InsertActionGroup(wallpaperItem.WallpaperID, actionGroup)
 
 	gesture := gtk.NewGestureClick()
 	gesture.SetButton(3)
@@ -493,19 +504,19 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperId string, isFavorite 
 			// context menu for the image
 			contextMenuModel := gio.NewMenu()
 
-			contextMenuModel.Append("Apply Wallpaper", wallpaperId + ".apply")
+			contextMenuModel.Append("Apply Wallpaper", wallpaperItem.WallpaperID + ".apply")
 			if isFavorite {
-				contextMenuModel.Append("Remove from Favorites", wallpaperId + ".toggle_favorite")
+				contextMenuModel.Append("Remove from Favorites", wallpaperItem.WallpaperID + ".toggle_favorite")
 			} else {
-				contextMenuModel.Append("Add to Favorites", wallpaperId + ".toggle_favorite")
+				contextMenuModel.Append("Add to Favorites", wallpaperItem.WallpaperID + ".toggle_favorite")
 			}
 			if isBroken {
-				contextMenuModel.Append("Unmark as Broken", wallpaperId + ".toggle_broken")
+				contextMenuModel.Append("Unmark as Broken", wallpaperItem.WallpaperID + ".toggle_broken")
 			} else {
-				contextMenuModel.Append("Mark as Broken", wallpaperId + ".toggle_broken")
+				contextMenuModel.Append("Mark as Broken", wallpaperItem.WallpaperID + ".toggle_broken")
 			}
-			contextMenuModel.Append("Open Wallpaper Directory", wallpaperId + ".open_directory")
-			contextMenuModel.Append("Copy Command to Clipboard", wallpaperId + ".copy_command")
+			contextMenuModel.Append("Open Wallpaper Directory", wallpaperItem.WallpaperID + ".open_directory")
+			contextMenuModel.Append("Copy Command to Clipboard", wallpaperItem.WallpaperID + ".copy_command")
 
 			contextMenu := gtk.NewPopoverMenuFromModel(contextMenuModel)
 			contextMenu.SetParent(imageWidget)
@@ -522,5 +533,5 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperId string, isFavorite 
 		}
 	})
 
-	log.Println("Context menu attached to image widget for wallpaper:", wallpaperId)
+	log.Println("Context menu attached to image widget for wallpaper:", wallpaperItem.WallpaperID)
 }
