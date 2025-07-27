@@ -68,17 +68,8 @@ func activate(app *gtk.Application) {
 	topControlBar.SetMarginBottom(10)
 	topControlBar.SetMarginStart(10)
 	topControlBar.SetMarginEnd(10)
-
-	bottomControlBar := gtk.NewBox(gtk.OrientationHorizontal, 0)
-	bottomControlBar.SetHAlign(gtk.AlignCenter)
-	bottomControlBar.SetVAlign(gtk.AlignEnd)
-	bottomControlBar.SetMarginTop(10)
-	bottomControlBar.SetMarginBottom(10)
-	bottomControlBar.SetMarginStart(10)
-	bottomControlBar.SetMarginEnd(10)
-
+	
 	refreshButton := gtk.NewButtonWithLabel("Refresh")
-	refreshButton.SetHExpand(false)
 	refreshButton.SetHAlign(gtk.AlignStart)
 	refreshButton.SetVAlign(gtk.AlignCenter)
 	refreshButton.Connect("clicked", func() {
@@ -86,6 +77,62 @@ func activate(app *gtk.Application) {
 		refreshWallpaperItems()
 	})
 	topControlBar.Append(refreshButton)
+
+	searchBar := gtk.NewSearchBar()
+	searchBox := gtk.NewBox(gtk.OrientationHorizontal, 0)
+	searchEntry := gtk.NewSearchEntry()
+	searchEntry.SetPlaceholderText("Search wallpapers...")
+	searchEntry.SetHAlign(gtk.AlignCenter)
+	searchEntry.SetVAlign(gtk.AlignCenter)
+	searchEntry.Connect("search-changed", func(entry *gtk.SearchEntry) {
+		query := strings.ToLower(entry.Text())
+		log.Printf("Search query: %s", query)
+	})
+	searchBox.Append(searchEntry)
+	searchBar.SetChild(searchBox)
+	searchBar.ConnectEntry(searchEntry)
+	searchBar.SetSearchMode(true)
+	topControlBar.Append(searchBar)
+
+	sortByModel := gtk.NewStringList([]string{"Date (desc)", "Date (asc)", "Name (asc)", "Name (desc)"})
+	sortByDropdown := gtk.NewDropDown(sortByModel, nil)
+	sortByDropdown.SetHAlign(gtk.AlignStart)
+	sortByDropdown.SetVAlign(gtk.AlignCenter)
+	topControlBar.Append(sortByDropdown)
+
+	randomButton := gtk.NewButtonWithLabel("Random")
+	randomButton.SetHAlign(gtk.AlignStart)
+	randomButton.SetVAlign(gtk.AlignCenter)
+	// randomButton.Connect("clicked", func() {
+	// 	applyRandomWallpaper()
+	// })
+	topControlBar.Append(randomButton)
+
+	optionsButton := gtk.NewButtonWithLabel("Options")
+	optionsButton.SetHAlign(gtk.AlignEnd)
+	optionsButton.SetVAlign(gtk.AlignCenter)
+	optionsButton.Connect("clicked", func() {
+		log.Println("Opening options dialog...")
+		showOptionsDialog()
+	})
+	topControlBar.Append(optionsButton)
+
+	exitButton := gtk.NewButtonWithLabel("Exit")
+	exitButton.SetHAlign(gtk.AlignEnd)
+	exitButton.SetVAlign(gtk.AlignCenter)
+	exitButton.Connect("clicked", func() {
+		log.Println("Exiting application...")
+		Window.Close()
+	})
+	topControlBar.Append(exitButton)
+	
+	bottomControlBar := gtk.NewBox(gtk.OrientationHorizontal, 0)
+	bottomControlBar.SetHAlign(gtk.AlignCenter)
+	bottomControlBar.SetVAlign(gtk.AlignEnd)
+	bottomControlBar.SetMarginTop(10)
+	bottomControlBar.SetMarginBottom(10)
+	bottomControlBar.SetMarginStart(10)
+	bottomControlBar.SetMarginEnd(10)
 
 	// volume control
 	volumeContainer := gtk.NewBox(gtk.OrientationVertical, 0)
