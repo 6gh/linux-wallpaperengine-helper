@@ -16,10 +16,11 @@ type ConstantsStruct struct {
 }
 
 type PostProcessingStruct struct {
-	Enabled        bool   `toml:"enabled"         comment:"Whether to enable post-processing features below"`
-	ScreenshotFile string `toml:"screenshot_file" comment:"The file where the screenshot will be saved with the --screenshot flag"`
-	PostCommand    string `toml:"post_command"    comment:"The command to run after the wallpaper is applied, with some placeholders"`
-	SetSWWW        bool   `toml:"set_swww"        comment:"Whether to set the wallpaper using swww after applying the wallpaper; requires screenshot_file to be set and swww to be working"`
+	Enabled         bool   `toml:"enabled"          comment:"Whether to enable post-processing features below"`
+	ArtificialDelay int64  `toml:"artificial_delay" comment:"Artificial delay in seconds to wait before post-processing; ensures the wallpaper is fully applied"`
+	ScreenshotFile  string `toml:"screenshot_file"  comment:"The file where the screenshot will be saved with the --screenshot flag"`
+	PostCommand     string `toml:"post_command"     comment:"The command to run after the wallpaper is applied, with some placeholders"`
+	SetSWWW         bool   `toml:"set_swww"         comment:"Whether to set the wallpaper using swww after applying the wallpaper; requires screenshot_file to be set and swww to be working"`
 }
 
 type SavedUIStateStruct struct {
@@ -45,9 +46,10 @@ func NewDefaultConfig(configDir string) *ConfigStruct {
 			WallpaperEngineAssets:    "",
 		},
 		PostProcessing: PostProcessingStruct{
-			Enabled:        false,
-			ScreenshotFile: path.Join(configDir, "screenshot.png"),
-			PostCommand:    "",
+			Enabled:         false,
+			ArtificialDelay: 1,
+			ScreenshotFile:  path.Join(configDir, "screenshot.png"),
+			PostCommand:     "",
 		},
 		SavedUIState: SavedUIStateStruct{
 			LastSetId: "",

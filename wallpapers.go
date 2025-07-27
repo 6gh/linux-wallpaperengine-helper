@@ -2,10 +2,11 @@ package main
 
 import (
 	"log"
+	"math/rand"
 	"path"
 	"regexp"
 	"strconv"
-	"syscall"
+	"time"
 )
 
 
@@ -35,28 +36,10 @@ func createWallpaperCommand(wallpaperPath string, volume float64) (string, strin
 func applyWallpaper(wallpaperPath string, volume float64) bool {
 	cmd, cacheScreenshot := createWallpaperCommand(wallpaperPath, volume)
 
-	runningPids, err := getRunningProcessPids("linux-wallpaperengine");
+	err := tryKillProcesses("linux-wallpaperengine")
 	if err != nil {
-		log.Println("Error checking if linux-wallpaperengine is running:", err)
+		log.Printf("Error trying to kill existing processes: %v", err)
 		return false
-	}
-	
-	if len(runningPids) > 0 {
-		log.Println("linux-wallpaperengine is already running, killing old process(es)...")
-		for _, pid := range runningPids {
-			pidInt, err := strconv.Atoi(pid)
-			if err != nil {
-				log.Printf("Error converting PID '%s' to int: %v", pid, err)
-				return false // exit if we cannot convert the PID to an int, to prevent multiple instances taking up resources
-			}
-			err = syscall.Kill(pidInt, syscall.SIGTERM)
-			if err != nil {
-				log.Printf("Error killing process with PID %d: %v", pidInt, err)
-				return false // exit if we cannot kill the old process, to prevent multiple instances taking up resources
-			} else {
-				log.Printf("Successfully killed process with PID %d", pidInt)
-			}
-		}
 	}
 
 	log.Println("Executing command:", cmd)
@@ -77,6 +60,10 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 		postCmdStr = screenshotRegex.ReplaceAllString(postCmdStr, cacheScreenshot)
 
 		log.Printf("Post-processing enabled, running command: %s", postCmdStr)
+		if Config.PostProcessing.ArtificialDelay > 0 {
+			log.Printf("Waiting for %d seconds before running post-processing...", Config.PostProcessing.ArtificialDelay)
+			time.Sleep(time.Duration(Config.PostProcessing.ArtificialDelay) * time.Second)
+		}
 		pid, err := runDetachedProcess("sh", "-c", postCmdStr)
 		if err != nil {
 			log.Printf("Error starting post-processing command '%s': %v", postCmdStr, err)
@@ -100,4 +87,44 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 	// Save the last set wallpaper ID
 	Config.SavedUIState.LastSetId = path.Base(wallpaperPath)
 	return true
+}
+
+func restoreWallpaper() bool {
+	if Config.SavedUIState.LastSetId == "" {
+		log.Println("No last set wallpaper ID found, cannot restore wallpaper.")
+		return false
+	}
+
+	wallpaperPath, err := resolvePath(path.Join(Config.Constants.WallpaperEngineDir, Config.SavedUIState.LastSetId))
+	if err != nil {
+		log.Printf("Failed to restore wallpaper; Error resolving wallpaper path: %v", err)
+		return false
+	}
+
+	log.Printf("Restoring last set wallpaper: %s", wallpaperPath)
+	return applyWallpaper(wallpaperPath, float64(Config.SavedUIState.Volume))
+}
+
+func applyRandomWallpaper() bool {
+	if len(WallpaperItems) == 0 {
+		log.Println("No wallpapers available to apply.")
+		return false
+	}
+
+	nonBrokenWallpapers := make([]WallpaperItem, 0)
+	for _, item := range WallpaperItems {
+		if !item.IsBroken {
+			nonBrokenWallpapers = append(nonBrokenWallpapers, item)
+		}
+	}
+	if len(nonBrokenWallpapers) == 0 {
+		log.Println("No non-broken wallpapers available to apply.")
+		return false
+	}
+
+	randomIndex := rand.Intn(len(nonBrokenWallpapers))
+	wallpaper := nonBrokenWallpapers[randomIndex]
+
+	log.Printf("Applying random wallpaper: %s", wallpaper.WallpaperID)
+	return applyWallpaper(wallpaper.WallpaperPath, float64(Config.SavedUIState.Volume))
 }

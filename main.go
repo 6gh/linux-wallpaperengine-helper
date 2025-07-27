@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "image/gif"  // For gif decoder
 	_ "image/jpeg" // For jpeg decoder
 	_ "image/png"  // For png decoder
@@ -10,6 +11,7 @@ import (
 
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/urfave/cli/v3"
 )
 
 var Config *ConfigStruct
@@ -37,41 +39,66 @@ func main() {
 	configFile := path.Join(configDir, "config.toml")
 	readOrCreateConfig(configFile, Config)
 
-	// check for --restore
-	restore := false
-	for _, arg := range os.Args {
-		if arg == "--restore" {
-			restore = true
-			log.Println("Restore mode activated, applying last set wallpaper...")
-			break
+	if (len(os.Args) > 1) {
+		log.Println("Running as a CLI application")
+
+		cmd := &cli.Command{
+			Name: "linux-wallpaperengine-helper",
+			Usage: "A really simple helper GUI app to apply wallpapers using linux-wallpaperengine",
+			Commands: []*cli.Command{
+				{
+					Name: "restore",
+					Aliases: []string{"r"},
+					Usage: "Restore the last set wallpaper set in the config",
+					Flags: []cli.Flag{
+						&cli.BoolFlag{
+							Name: "skip-post-processing",
+							Aliases: []string{"sp"},
+							Usage: "Skip post-processing step when restoring wallpaper",
+						},
+					},
+					Action: func(ctx context.Context, c *cli.Command) error {
+						oldPostProcessingEnabled := Config.PostProcessing.Enabled
+						defer func() {
+							log.Printf("Restoring PostProcessing.Enabled to %v", oldPostProcessingEnabled)
+							Config.PostProcessing.Enabled = oldPostProcessingEnabled
+						}()
+						if oldPostProcessingEnabled && c.Bool("skip-post-processing") {
+							log.Println("Skipping post-processing step as requested.")
+							Config.PostProcessing.Enabled = false
+						}
+
+						if !restoreWallpaper() {
+							log.Println("Failed to restore last set wallpaper.")
+							return cli.Exit("Failed to restore last set wallpaper.", 1)
+						}
+						return nil
+					},
+				},
+				{
+					Name: "kill",
+					Aliases: []string{"k"},
+					Usage: "Kill any running linux-wallpaperengine process",
+					Action: func(ctx context.Context, c *cli.Command) error {
+						if err := tryKillProcesses("linux-wallpaperengine"); err != nil {
+							log.Printf("Error trying to kill existing processes: %v", err)
+							return cli.Exit("Failed to kill existing processes.", 1)
+						}
+						return nil
+					},
+				},
+			},
 		}
+
+		if err := cmd.Run(context.Background(), os.Args); err != nil {
+			log.Fatal(err)
+    }
+	} else {
+		app := gtk.NewApplication("dev._6gh.linux-wallpaperengine-helper", gio.ApplicationFlagsNone)
+		app.ConnectActivate(func() { activate(app) })
+
+		code := app.Run(os.Args)
+		saveConfig()
+		os.Exit(code)
 	}
-
-	if restore {
-		if Config.SavedUIState.LastSetId == "" {
-			log.Println("No last set wallpaper ID found, cannot restore wallpaper.")
-			os.Exit(1)
-		}
-		wallpaperPath, err := resolvePath(Config.Constants.WallpaperEngineDir)
-		if err != nil {
-			log.Printf("Failed to restore wallpaper; Error resolving Wallpaper Engine path: %v", err)
-			os.Exit(1)
-		}
-
-		success := applyWallpaper(path.Join(wallpaperPath, Config.SavedUIState.LastSetId), float64(Config.SavedUIState.Volume))
-		if !success {
-			log.Println("Failed to restore wallpaper.")
-			os.Exit(1)
-		} else {
-			log.Println("Wallpaper restored successfully.")
-			os.Exit(0)
-		}
-	}
-
-	app := gtk.NewApplication("dev._6gh.linux-wallpaperengine-helper", gio.ApplicationFlagsNone)
-	app.ConnectActivate(func() { activate(app) })
-
-	code := app.Run(os.Args)
-	saveConfig()
-	os.Exit(code)
 }
