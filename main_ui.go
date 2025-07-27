@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"image"
 	"log"
 	"os"
@@ -44,6 +45,7 @@ var ImageClickSignalHandlers []glib.SignalHandle
 var FlowBox *gtk.FlowBox
 var Window *gtk.ApplicationWindow
 var StatusText *gtk.Label = nil
+var SearchQuery string = ""
 
 func activate(app *gtk.Application) {
 	Window = gtk.NewApplicationWindow(app)
@@ -75,7 +77,7 @@ func activate(app *gtk.Application) {
 	refreshButton.SetVAlign(gtk.AlignCenter)
 	refreshButton.Connect("clicked", func() {
 		log.Println("Refreshing wallpapers...")
-		refreshWallpaperItems()
+		refreshWallpaperDisplay()
 	})
 	topControlBar.Append(refreshButton)
 
@@ -86,8 +88,9 @@ func activate(app *gtk.Application) {
 	searchEntry.SetHAlign(gtk.AlignCenter)
 	searchEntry.SetVAlign(gtk.AlignCenter)
 	searchEntry.Connect("search-changed", func(entry *gtk.SearchEntry) {
-		query := strings.ToLower(entry.Text())
-		log.Printf("Search query: %s", query)
+		SearchQuery = strings.ToLower(entry.Text())
+		log.Printf("Search query: %s", SearchQuery)
+		filterWallpapersBySearch(SearchQuery)
 	})
 	searchBox.Append(searchEntry)
 	searchBar.SetChild(searchBox)
@@ -99,6 +102,24 @@ func activate(app *gtk.Application) {
 	sortByDropdown := gtk.NewDropDown(sortByModel, nil)
 	sortByDropdown.SetHAlign(gtk.AlignStart)
 	sortByDropdown.SetVAlign(gtk.AlignCenter)
+	sortByDropdown.SetSelected(0) // default to "Date (desc)"
+	sortByDropdown.Connect("notify::selected", func() {
+		selectedIndex := sortByDropdown.Selected()
+		switch selectedIndex {
+		case 0:
+			Config.SavedUIState.SortBy = "date_desc"
+		case 1:
+			Config.SavedUIState.SortBy = "date_asc"
+		case 2:
+			Config.SavedUIState.SortBy = "name_asc"
+		case 3:
+			Config.SavedUIState.SortBy = "name_desc"
+		default:
+			log.Printf("Unknown sort criteria index: %d, defaulting to date_desc", selectedIndex)
+			Config.SavedUIState.SortBy = "date_desc"
+		}
+		refreshWallpaperDisplay()
+	})
 	topControlBar.Append(sortByDropdown)
 
 	randomButton := gtk.NewButtonWithLabel("Random")
@@ -159,7 +180,8 @@ func activate(app *gtk.Application) {
 	volumeContainer.Append(volumeSlider)
 	bottomControlBar.Append(volumeContainer)
 
-	refreshWallpaperItems()
+	reloadWallpaperData()
+	refreshWallpaperDisplay()
 
 	scrolledWindow := gtk.NewScrolledWindow()
 	scrolledWindow.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
@@ -256,8 +278,7 @@ func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 	}()
 }
 
-func sortWallpaperItems() {
-	// sort by date modified, newest first
+func sortByDate(descending bool) {
 	sort.SliceStable(WallpaperItems, func(i, j int) bool {
 		iModTime := WallpaperItems[i].ModTime
 		jModTime := WallpaperItems[j].ModTime
@@ -265,8 +286,45 @@ func sortWallpaperItems() {
 			log.Printf("Error getting last modified info for wallpaper %s or %s", WallpaperItems[i].WallpaperID, WallpaperItems[j].WallpaperID)
 			return false // keep original order if there's an error
 		}
-		return iModTime.After(jModTime)
+		if descending {
+			return iModTime.After(jModTime)
+		} else {
+			return iModTime.Before(jModTime)
+		}
 	})
+}
+
+func sortByName(descending bool) {
+	sort.SliceStable(WallpaperItems, func(i, j int) bool {
+		iName := WallpaperItems[i].projectJson.Title
+		jName := WallpaperItems[j].projectJson.Title
+		if iName == "" || jName == "" {
+			log.Printf("Error getting name info for wallpaper %s or %s", WallpaperItems[i].WallpaperID, WallpaperItems[j].WallpaperID)
+			return false // keep original order if there's an error
+		}
+		if descending {
+			return iName > jName
+		} else {
+			return iName < jName
+		}
+	})
+}
+
+func sortWallpaperItems() {
+	// sort by date modified, newest first
+	switch Config.SavedUIState.SortBy {
+		case "date_desc":
+			sortByDate(true)
+		case "date_asc":
+			sortByDate(false)
+		case "name_desc":
+			sortByName(true)
+		case "name_asc":
+			sortByName(false)
+		default:
+			log.Printf("Unknown sort criteria: %s, defaulting to date_desc", Config.SavedUIState.SortBy)
+			sortByDate(true)
+	}
 
 	// put favorites first
 	sort.SliceStable(WallpaperItems, func(i, j int) bool {
@@ -277,34 +335,20 @@ func sortWallpaperItems() {
 		}
 	})
 
-	if Config.SavedUIState.HideBroken {
-		WallpaperItems = slices.DeleteFunc(WallpaperItems, func(item WallpaperItem) bool {
-			return item.IsBroken
-		})
-	} else {
-		// put broken wallpapers at the end
-		sort.SliceStable(WallpaperItems, func(i, j int) bool {
-			if WallpaperItems[i].IsBroken && !WallpaperItems[j].IsBroken {
-				return false
-			} else if !WallpaperItems[i].IsBroken && WallpaperItems[j].IsBroken {
-				return true
-			} else {
-				return false
-			}
-		})
-	}
+	// put broken wallpapers at the end
+	sort.SliceStable(WallpaperItems, func(i, j int) bool {
+		if WallpaperItems[i].IsBroken && !WallpaperItems[j].IsBroken {
+			return false
+		} else if !WallpaperItems[i].IsBroken && WallpaperItems[j].IsBroken {
+			return true
+		} else {
+			return false
+		}
+	})
 }
 
-func refreshWallpaperItems() {
-	FlowBox.RemoveAll()
+func reloadWallpaperData() error {
 	WallpaperItems = []WallpaperItem{}
-
-	// remove all previous child-activated signal handlers
-	// else we would have multiple handlers for the same signal
-	// causing multiple wallpapers to be applied on click
-	for _, id := range ImageClickSignalHandlers {
-		FlowBox.HandlerDisconnect(id)
-	}
 
 	// get all wallpapers from the wallpaperengine directory
 	wallpaperDir, err := ensureDir(Config.Constants.WallpaperEngineDir)
@@ -316,9 +360,9 @@ func refreshWallpaperItems() {
 		errorLabel.SetVExpand(true)
 		errorLabel.SetHAlign(gtk.AlignCenter)
 		errorLabel.SetVAlign(gtk.AlignCenter)
-		Window.SetChild(errorLabel) // Set the error label as the sole child
+		Window.SetChild(errorLabel)
 		Window.SetVisible(true)
-		return // Exit activation function
+		return err
 	}
 
 	wallpaperFolders, err := os.ReadDir(wallpaperDir)
@@ -329,26 +373,10 @@ func refreshWallpaperItems() {
 		errorLabel.SetVExpand(true)
 		errorLabel.SetHAlign(gtk.AlignCenter)
 		errorLabel.SetVAlign(gtk.AlignCenter)
-		Window.SetChild(errorLabel) // Set the error label as the sole child
+		Window.SetChild(errorLabel)
 		Window.SetVisible(true)
-		return // Exit activation function
+		return err
 	}
-
-	signalHandler := FlowBox.Connect("child-activated", func(box *gtk.FlowBox, child *gtk.FlowBoxChild) {
-		if child == nil {
-			return
-		}
-		// Retrieve the wallpaper ID from the tooltip text of the activated image
-		wallpaperId := child.Child().(*gtk.Overlay).Child().(*gtk.Image).Name()
-		if wallpaperId == "" {
-			log.Println("[WARN] No wallpaper ID found for the activated child.")
-			return
-		}
-		log.Println("Applying wallpaper:", wallpaperId)
-		fullWallpaperPath := path.Join(wallpaperDir, wallpaperId) 
-		go applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
-	})
-	ImageClickSignalHandlers = append(ImageClickSignalHandlers, signalHandler)
 
 	if len(wallpaperFolders) == 0 {
 		// Display error message if no wallpapers are found
@@ -359,7 +387,7 @@ func refreshWallpaperItems() {
 		errorLabel.SetVAlign(gtk.AlignCenter)
 		Window.SetChild(errorLabel)
 		Window.SetVisible(true)
-		return
+		return errors.New("No wallpapers found in the directory: " + wallpaperDir)
 	}
 
 	for _, wallpaperFolder := range wallpaperFolders {
@@ -416,6 +444,35 @@ func refreshWallpaperItems() {
 		})
 	}
 
+	return nil
+}
+
+func refreshWallpaperDisplay() {
+	FlowBox.RemoveAll()
+
+	// remove all previous child-activated signal handlers
+	// else we would have multiple handlers for the same signal
+	// causing multiple wallpapers to be applied on click
+	for _, id := range ImageClickSignalHandlers {
+		FlowBox.HandlerDisconnect(id)
+	}
+
+	signalHandler := FlowBox.Connect("child-activated", func(box *gtk.FlowBox, child *gtk.FlowBoxChild) {
+		if child == nil {
+			return
+		}
+		// Retrieve the wallpaper ID from the tooltip text of the activated image
+		wallpaperId := child.Child().(*gtk.Overlay).Child().(*gtk.Image).Name()
+		if wallpaperId == "" {
+			log.Println("[WARN] No wallpaper ID found for the activated child.")
+			return
+		}
+		log.Println("Applying wallpaper:", wallpaperId)
+		fullWallpaperPath := path.Join(Config.Constants.WallpaperEngineDir, wallpaperId) 
+		go applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
+	})
+	ImageClickSignalHandlers = append(ImageClickSignalHandlers, signalHandler)
+
 	sortWallpaperItems()
 
 	for _, wallpaperItem := range WallpaperItems {
@@ -435,7 +492,7 @@ func refreshWallpaperItems() {
 			if wallpaperItem.IsFavorite {
 				// if the wallpaper is a favorite, add a heart icon to the top right of the image
 				favoriteIcon := gtk.NewImageFromIconName("emote-love-symbolic")
-				favoriteIcon.SetPixelSize(16)
+				favoriteIcon.SetPixelSize(24)
 				favoriteIcon.SetHAlign(gtk.AlignEnd)
 				favoriteIcon.SetVAlign(gtk.AlignStart)
 				iconOverlay.AddOverlay(favoriteIcon)
@@ -443,7 +500,7 @@ func refreshWallpaperItems() {
 			if wallpaperItem.IsBroken {
 				// if the wallpaper is marked as broken, add a warning icon to the top right of the image
 				warningIcon := gtk.NewImageFromIconName("dialog-warning-symbolic")
-				warningIcon.SetPixelSize(16)
+				warningIcon.SetPixelSize(24)
 				warningIcon.SetHAlign(gtk.AlignEnd)
 				warningIcon.SetVAlign(gtk.AlignStart)
 				iconOverlay.AddOverlay(warningIcon)
@@ -456,6 +513,61 @@ func refreshWallpaperItems() {
 			FlowBox.Append(iconOverlay)
 			loadImageAsync(wallpaperItem.CachedPath, imageWidget, 128)
 		}
+	}
+
+	// filterWallpapers will already hide broken wallpapers if Config.SavedUIState.HideBroken is true
+	// so we just filter by search query if it is set
+	filterWallpapersBySearch(SearchQuery)
+}
+
+func filterWallpapersBySearch(query string) {
+	filterWallpapers(func(item WallpaperItem) bool {
+		if query == "" {
+			return true // show all wallpapers if query is empty
+		}
+		// check if the wallpaper title, description, or tags contains the query
+		titleMatch := strings.Contains(strings.ToLower(item.projectJson.Title), strings.ToLower(query))
+		descriptionMatch := strings.Contains(strings.ToLower(item.projectJson.Description), strings.ToLower(query))
+		tagsMatch := false
+		for _, tag := range item.projectJson.Tags {
+			if strings.Contains(strings.ToLower(tag), strings.ToLower(query)) {
+				tagsMatch = true
+				break
+			}
+		}
+		return titleMatch || descriptionMatch || tagsMatch
+	})
+}
+
+func filterWallpapers(predicate func(WallpaperItem) bool) {
+	filtered := []WallpaperItem{}
+	for _, item := range WallpaperItems {
+		if predicate(item) {
+			if Config.SavedUIState.HideBroken && item.IsBroken {
+				continue
+			} else {
+				filtered = append(filtered, item)
+			}
+		}
+	}
+
+	child := FlowBox.FirstChild()
+	for child != nil {
+		if flowBoxChild, ok := child.(*gtk.FlowBoxChild); ok {
+			if slices.ContainsFunc(filtered, func(item WallpaperItem) bool {
+				return item.WallpaperID == flowBoxChild.Child().(*gtk.Overlay).Child().(*gtk.Image).Name()
+			}) {
+				flowBoxChild.SetVisible(true)
+			} else {
+				flowBoxChild.SetVisible(false)
+			}
+
+			child = flowBoxChild.NextSibling()
+			continue
+		}
+		log.Printf("Unexpected child type: %T", child)
+		child = nil // break the loop if we encounter an unexpected type
+		break
 	}
 }
 
@@ -485,7 +597,14 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, i
 			Config.SavedUIState.Favorites = append(Config.SavedUIState.Favorites, wallpaperItem.WallpaperID)
 		}
 
-		refreshWallpaperItems()
+		for i := range WallpaperItems {
+			if WallpaperItems[i].WallpaperID == wallpaperItem.WallpaperID {
+				WallpaperItems[i].IsFavorite = wallpaperItem.IsFavorite
+				break
+			}
+    }
+
+		refreshWallpaperDisplay()
 	})
 	actionGroup.AddAction(&toggleFavoriteAction.Action)
 
@@ -502,7 +621,14 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, i
 			Config.SavedUIState.Broken = append(Config.SavedUIState.Broken, wallpaperItem.WallpaperID)
 		}
 
-		refreshWallpaperItems()
+		for i := range WallpaperItems {	
+			if WallpaperItems[i].WallpaperID == wallpaperItem.WallpaperID {
+				WallpaperItems[i].IsBroken = wallpaperItem.IsBroken
+				break
+			}
+    }
+
+		refreshWallpaperDisplay()
 	})
 	actionGroup.AddAction(&toggleBrokenAction.Action)
 

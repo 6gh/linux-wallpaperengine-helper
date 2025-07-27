@@ -25,6 +25,7 @@ type PostProcessingStruct struct {
 
 type SavedUIStateStruct struct {
 	LastSetId  string   `toml:"last_set_id" comment:"The last set wallpaper ID, used for restoring the wallpaper"` // # TODO: add multi monitor support
+	SortBy     string   `toml:"sort_by"     comment:"The criteria to sort wallpapers by. 'date_desc', 'date_asc', 'name_desc', 'name_asc'"`
 	Volume     int64    `toml:"volume"      comment:"The volume level for the wallpaper engine, 0-100; 0 = --silent, > 0 = --volume <value>"`
 	HideBroken bool     `toml:"hide_broken" comment:"Whether to hide broken wallpapers from the UI"`
 	Broken     []string `toml:"broken"      comment:"Wallpapers marked as 'broken'; can be hidden from UI or shown at the end of the list"`
@@ -52,11 +53,12 @@ func NewDefaultConfig(configDir string) *ConfigStruct {
 			PostCommand:     "",
 		},
 		SavedUIState: SavedUIStateStruct{
-			LastSetId: "",
-			Broken:    []string{},
-			Favorites: []string{},
+			LastSetId:  "",
+			SortBy: 	  "date_desc",
+			Broken:     []string{},
+			Favorites:  []string{},
 			HideBroken: false,
-			Volume: 100,
+			Volume:     100,
 		},
 	}
 }

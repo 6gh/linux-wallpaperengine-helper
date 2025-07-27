@@ -1,8 +1,6 @@
 package main
 
 import (
-	"log"
-
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
@@ -73,7 +71,14 @@ func showOptionsDialog() {
 	hideBroken.SetActive(Config.SavedUIState.HideBroken)
 	hideBroken.Connect("toggled", func() {
 		Config.SavedUIState.HideBroken = hideBroken.Active()
-		log.Println("Hide Broken Wallpapers option toggled, requires list refresh")
+		filterWallpapers(func(item WallpaperItem) bool {
+			// filterWallpapers already will hide broken wallpapers if Config.SavedUIState.HideBroken is true
+			// so we just return true to keep all wallpapers in the list
+			return true
+		})
+		if SearchQuery != "" {
+			filterWallpapersBySearch(SearchQuery)
+		}
 	});
 	content.Append(hideBroken)
 
