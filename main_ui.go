@@ -43,10 +43,11 @@ var WallpaperItems []WallpaperItem
 var ImageClickSignalHandlers []glib.SignalHandle
 var FlowBox *gtk.FlowBox
 var Window *gtk.ApplicationWindow
+var StatusText *gtk.Label = nil
 
 func activate(app *gtk.Application) {
 	Window = gtk.NewApplicationWindow(app)
-	Window.SetTitle("linux-wallpaperengine Helper")
+	Window.SetTitle("Linux Wallpaper Engine Helper")
 
 	FlowBox = gtk.NewFlowBox()
 	FlowBox.SetSelectionMode(gtk.SelectionSingle)
@@ -167,17 +168,17 @@ func activate(app *gtk.Application) {
 	scrolledWindow.SetVExpand(true)
 	scrolledWindow.SetChild(FlowBox)
 
-	topText := gtk.NewLabel("Select a wallpaper to apply it.")
-	topText.SetHAlign(gtk.AlignCenter)
-	topText.SetVAlign(gtk.AlignStart)
-	topText.SetMarginTop(4)
-	topText.SetMarginBottom(4)
-	topText.SetMarginStart(4)
-	topText.SetMarginEnd(4)
+	StatusText = gtk.NewLabel("Select a wallpaper to apply it.")
+	StatusText.SetHAlign(gtk.AlignCenter)
+	StatusText.SetVAlign(gtk.AlignStart)
+	StatusText.SetMarginTop(4)
+	StatusText.SetMarginBottom(4)
+	StatusText.SetMarginStart(4)
+	StatusText.SetMarginEnd(4)
 
 	vBox := gtk.NewBox(gtk.OrientationVertical, 0)
 	vBox.Append(topControlBar)
-	vBox.Append(topText)
+	vBox.Append(StatusText)
 	vBox.Append(scrolledWindow)
 	vBox.Append(bottomControlBar)
 
@@ -345,7 +346,7 @@ func refreshWallpaperItems() {
 		}
 		log.Println("Applying wallpaper:", wallpaperId)
 		fullWallpaperPath := path.Join(wallpaperDir, wallpaperId) 
-		applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
+		go applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
 	})
 	ImageClickSignalHandlers = append(ImageClickSignalHandlers, signalHandler)
 
@@ -467,7 +468,7 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, i
 		log.Println("Applying wallpaper:", wallpaperItem.WallpaperID)
 		wallpaperDir := Config.Constants.WallpaperEngineDir
 		fullWallpaperPath := path.Join(wallpaperDir, wallpaperItem.WallpaperID)
-		applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
+		go applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
 	})
 	actionGroup.AddAction(&applyAction.Action)
 

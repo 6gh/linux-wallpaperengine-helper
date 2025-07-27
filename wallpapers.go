@@ -7,8 +7,11 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/diamondburned/gotk4/pkg/core/glib"
 )
 
+var settingWallpaper bool = false
 
 func createWallpaperCommand(wallpaperPath string, volume float64) (string, string) {
 	cmd := Config.Constants.LinuxWallpaperEngineBin + " --screen-root HDMI-A-1 --bg " + wallpaperPath
@@ -33,7 +36,27 @@ func createWallpaperCommand(wallpaperPath string, volume float64) (string, strin
 	return cmd, cacheScreenshot
 }
 
+func updateGUIStatusText(message string) {
+	if StatusText != nil {
+		glib.IdleAdd(func() {
+			StatusText.SetText(message)
+		})
+	}
+}
+
 func applyWallpaper(wallpaperPath string, volume float64) bool {
+	if settingWallpaper {
+		log.Println("Another wallpaper is currently being set. Please wait before setting another.")
+		return false
+	}
+	updateGUIStatusText("Starting linux-wallpaperengine...")
+	settingWallpaper = true
+
+	defer func() {
+		updateGUIStatusText("Select a wallpaper to apply it.")
+		settingWallpaper = false
+	}()
+
 	cmd, cacheScreenshot := createWallpaperCommand(wallpaperPath, volume)
 
 	err := tryKillProcesses("linux-wallpaperengine")
@@ -61,9 +84,11 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 
 		log.Printf("Post-processing enabled, running command: %s", postCmdStr)
 		if Config.PostProcessing.ArtificialDelay > 0 {
+			updateGUIStatusText("Delaying post-processing...")
 			log.Printf("Waiting for %d seconds before running post-processing...", Config.PostProcessing.ArtificialDelay)
 			time.Sleep(time.Duration(Config.PostProcessing.ArtificialDelay) * time.Second)
 		}
+		updateGUIStatusText("Running post-processing...")
 		pid, err := runDetachedProcess("sh", "-c", postCmdStr)
 		if err != nil {
 			log.Printf("Error starting post-processing command '%s': %v", postCmdStr, err)
