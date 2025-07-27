@@ -12,78 +12,15 @@ Again, this is meant to be a simple GUI without advanced features like playlists
 
 ## How to use
 
-Run it with `./linux-wallpaperengine-helper`. If you want to restore on boot, you can configure your DE/WM to run `./linux-wallpaperengine-helper --restore` which tries to read the `last_set_id` from the config, set that ID, and then exits.
+Run it with `./linux-wallpaperengine-helper`.
 
-You can configure other stuff in `~/.config/linux-wallpaperengine-helper/config.toml`.
+If you want to restore on boot, you can configure your DE/WM to run `./linux-wallpaperengine-helper restore` which tries to read the `last_set_id` from the config, set that ID, and then exits.
 
 ## Configuration
 
-Some configs are configurable via the UI, but every config is editable via the config.toml file
+Some configs are configurable via the UI, but every config is editable via the config.toml file. If the config.toml file does not exist, the app will run with a default configuration, and save it to `~/.config/linux-wallpaperengine-helper/config.toml`.
 
-Below are the defaults, as well as some added comments to explain each one.
-
-```toml
-# Holds variables that should not be changed manually
-[Constants]
-# The executable path to the linux-wallpaperengine binary.
-# Leave as-is if you added the binary to path
-# Else, this should be an absolute path
-# * Required
-linux_wallpaperengine_bin = 'linux-wallpaperengine'
-
-# The directory to look for wallpapers in
-# This should point to Wallpaper Engins's workshop folder
-# Must be absolute path, and cannot contain `~` for home folder
-# * Required
-wallpaper_engine_dir = '<home_dir>/.steam/steam/steamapps/workshop/content/431960'
-
-# This is the latest wallpaper you set
-# --restore will set the wallpaper to this
-# * Can be an empty string
-last_set_id = ''
-
-# Holds configuration that is run after setting a wallpaper
-[PostProcessing]
-# Enables or disables this whole section
-# * Required
-enabled = true
-
-# The file linux-wallpaperengine should save to
-# This goes after the `--screenshot` flag
-# * Can be an empty string
-screenshot_file = '<home_dir>/.config/linux-wallpaperengine-helper/screenshot.png'
-
-# The command to run after
-# If empty, it will do nothing after setting a wallpaper
-# You can put %screenshot% anywhere in the string which is replaced with the screenshot_file variable above
-# * Can be an empty string
-# *Disabled if screenshot_file is empty
-post_command = ""
-
-# Variables the UI reads
-[SavedUIState]
-# String array of wallpapers marked as broken
-# If hide_broken is true, these won't appear in the UI
-# If hide_broken is false, these will appear in the end of the list
-# * Can be an empty array
-broken = []
-
-# String array of wallpapers favorited
-# These will apear in the start of the list
-# * Can be an empty array
-favorites = []
-
-# Determines if broken wallpapers should appear at all or not
-# If false, will put broken wallpapers at the end
-# * Required
-hide_broken = false
-
-# The volume of the wallpaper
-# Set after the `--volume` flag
-# If it is zero, it will add the `--silent` flag instead
-# * Required; Must be an integer of 0-100
-volume = 100
-```
+Do not edit the config while the app is running, as when it exits it will overwrite the config file with the config that it had in memory. The app does not support hot reloading of the config file.
 
 ## License
 
