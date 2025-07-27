@@ -103,9 +103,9 @@ func activate(app *gtk.Application) {
 	randomButton := gtk.NewButtonWithLabel("Random")
 	randomButton.SetHAlign(gtk.AlignStart)
 	randomButton.SetVAlign(gtk.AlignCenter)
-	// randomButton.Connect("clicked", func() {
-	// 	applyRandomWallpaper()
-	// })
+	randomButton.Connect("clicked", func() {
+		applyRandomWallpaper()
+	})
 	topControlBar.Append(randomButton)
 
 	optionsButton := gtk.NewButtonWithLabel("Options")

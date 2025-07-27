@@ -1,6 +1,10 @@
 package main
 
-import "github.com/diamondburned/gotk4/pkg/gtk/v4"
+import (
+	"log"
+
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+)
 
 func showOptionsDialog() {
 	dialog := gtk.NewWindow()
@@ -69,6 +73,7 @@ func showOptionsDialog() {
 	hideBroken.SetActive(Config.SavedUIState.HideBroken)
 	hideBroken.Connect("toggled", func() {
 		Config.SavedUIState.HideBroken = hideBroken.Active()
+		log.Println("Hide Broken Wallpapers option toggled, requires list refresh")
 	});
 	content.Append(hideBroken)
 

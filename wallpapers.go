@@ -26,9 +26,9 @@ func createWallpaperCommand(wallpaperPath string, volume float64) (string, strin
 		cmd += " --screenshot " + cacheScreenshot
 	}
 
-        if Config.Constants.WallpaperEngineAssets != "" {
-                cmd += " --assets-dir " + Config.Constants.WallpaperEngineAssets
-        }
+	if Config.Constants.WallpaperEngineAssets != "" {
+		cmd += " --assets-dir " + Config.Constants.WallpaperEngineAssets
+	}
 
 	return cmd, cacheScreenshot
 }
@@ -73,19 +73,41 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 
 		// set swww wallpaper if enabled
 		if Config.PostProcessing.SetSWWW {
-			log.Printf("Set swww is enabled, running swww img command")
-			pid, err := runDetachedProcess("sleep", "2s", "&&", "swww", "img", cacheScreenshot)
-			if err != nil {
-				log.Printf("Error starting swww command: %v", err)
-				return false // exit if we cannot start the swww command, to prevent multiple instances taking up resources
-			} else {
-				log.Printf("Successfully started swww command (PID: %d)", pid)
-			}
+			setSWWW(cacheScreenshot)
 		}
 	}
 
 	// Save the last set wallpaper ID
 	Config.SavedUIState.LastSetId = path.Base(wallpaperPath)
+	return true
+}
+
+func setSWWW(screenshotPath string) bool {
+	runningDaemons, err := getRunningProcessPids("swww-daemon")
+	
+	if err != nil {
+		log.Println("Couldn't check for swww-daemon running.", err)
+		return false
+	}
+
+	if len(runningDaemons) < 1 {
+		log.Println("swww-daemon not running, starting swww-daemon")
+		pid, err := runDetachedProcess("swww-daemon")
+		if err != nil {
+			log.Println("swww-daemon couldn't be started.", err)
+			return false
+		}
+
+		log.Printf("Started swww-daemon [PID: %v]", pid)
+	}
+
+	pid, err := runDetachedProcess("swww", "img", screenshotPath)
+	if err != nil {
+		log.Println("swww command couldn't be started.", err)
+		return false
+	}
+
+	log.Printf("Started swww command [PID: %v]", pid)
 	return true
 }
 
