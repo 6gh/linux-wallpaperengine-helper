@@ -30,9 +30,9 @@ func showOptionsDialog() {
 	screenshotFileEntry := gtk.NewSearchEntry()
 	screenshotFileEntry.SetPlaceholderText("Enter path to screenshot file")
 	screenshotFileEntry.Connect("search-changed", func(entry *gtk.SearchEntry) {
-		Config.PostProcessing.ScreenshotFile = entry.Text()
+		Config.PostProcessing.ScreenshotFiles[0] = entry.Text()
 	})
-	screenshotFileEntry.SetText(Config.PostProcessing.ScreenshotFile)
+	screenshotFileEntry.SetText(Config.PostProcessing.ScreenshotFiles[0])
 	screenshotFileLabel := gtk.NewLabel("Screenshot File:")
 	screenshotFileBox.Append(screenshotFileLabel)
 	screenshotFileBox.Append(screenshotFileEntry)

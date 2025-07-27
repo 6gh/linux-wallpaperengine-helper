@@ -1,14 +1,20 @@
 package main
 
 import (
+	"image/jpeg"
+	"image/png"
+	"io"
 	"log"
 	"math/rand"
+	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/diamondburned/gotk4/pkg/core/glib"
+	"golang.org/x/image/bmp"
 )
 
 var settingWallpaper bool = false
@@ -23,8 +29,8 @@ func createWallpaperCommand(wallpaperPath string, volume float64) (string, strin
 	}
 
 	cacheScreenshot := ""
-	if Config.PostProcessing.Enabled && Config.PostProcessing.ScreenshotFile != "" {
-		cacheScreenshot = Config.PostProcessing.ScreenshotFile // ~/.cache/linux-wallpaperengine-helper/screenshot.png
+	if Config.PostProcessing.Enabled {
+		cacheScreenshot = path.Join(CacheDir, "screenshot.png")
 
 		cmd += " --screenshot " + cacheScreenshot
 	}
@@ -42,6 +48,15 @@ func updateGUIStatusText(message string) {
 			StatusText.SetText(message)
 		})
 	}
+}
+
+func replaceVariablesInCommand(command string, variables map[string]string) string {
+	// do not modify the original command, return a new string with replacements
+	output := command
+	for key, value := range variables {
+		output = regexp.MustCompile(`%` + key + `%`).ReplaceAllString(output, value)
+	}
+	return output
 }
 
 func applyWallpaper(wallpaperPath string, volume float64) bool {
@@ -74,26 +89,98 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 		log.Printf("Successfully started detached wallpaper command (PID: %d): %s", pid, cmd)
 	}
 
-	if Config.PostProcessing.Enabled && cacheScreenshot != "" && Config.PostProcessing.PostCommand != "" {
-		screenshotPattern := `%screenshot%`
-		screenshotRegex := regexp.MustCompile(screenshotPattern)
+	if Config.PostProcessing.Enabled {
+		log.Println("Post-processing enabled, running post-processing...")
 
-		postCmdStr := Config.PostProcessing.PostCommand
-
-		postCmdStr = screenshotRegex.ReplaceAllString(postCmdStr, cacheScreenshot)
-
-		log.Printf("Post-processing enabled, running command: %s", postCmdStr)
 		if Config.PostProcessing.ArtificialDelay > 0 {
 			updateGUIStatusText("Delaying post-processing...")
 			log.Printf("Waiting for %d seconds before running post-processing...", Config.PostProcessing.ArtificialDelay)
 			time.Sleep(time.Duration(Config.PostProcessing.ArtificialDelay) * time.Second)
 		}
 		updateGUIStatusText("Running post-processing...")
-		pid, err := runDetachedProcess("sh", "-c", postCmdStr)
-		if err != nil {
-			log.Printf("Error starting post-processing command '%s': %v", postCmdStr, err)
-		} else {
-			log.Printf("Successfully started post-processing command (PID: %d): %s", pid, postCmdStr)
+
+		if len(Config.PostProcessing.ScreenshotFiles) > 0 && len(Config.PostProcessing.ScreenshotFiles[0]) > 0 {
+			for _, filePath := range Config.PostProcessing.ScreenshotFiles {
+				if path.Ext(filePath) == "" {
+					filePath += ".png" // ensure the file has a .png extension
+				}
+
+				if !slices.Contains([]string{".png", ".jpg", ".jpeg", ".bmp"}, path.Ext(filePath)) {
+					log.Printf("Unsupported file format for post-processing: %s", filePath)
+					continue // skip unsupported formats
+				}
+
+				source, err := os.Open(cacheScreenshot)
+				if err != nil {
+					log.Printf("Error opening screenshot file for post-processing: %v", err)
+					continue
+				}
+				defer source.Close()
+
+				dest, err := os.Create(filePath)
+				if err != nil {
+					log.Printf("Error creating destination file for post-processing: %v", err)
+					continue
+				}
+				defer dest.Close()
+
+				if path.Ext(filePath) == ".png" {
+					// no need for transcoding, just copy the file
+					log.Printf("Copying screenshot to: %s", filePath)
+
+					if _, err := io.Copy(dest, source); err != nil {
+						log.Printf("Error copying screenshot file: %v", err)
+						continue
+					}
+
+					log.Printf("Copied screenshot to: %s", filePath)
+					continue
+				} else {
+					// transcoding the screenshot to the specified file format
+					log.Printf("Transcoding screenshot to: %s", filePath)
+
+					img, err := png.Decode(source)
+					if err != nil {
+						log.Printf("Error decoding PNG for transcoding: %v", err)
+						continue
+					}
+
+					switch ext := path.Ext(filePath); ext {
+						case ".jpg", ".jpeg":
+							err = jpeg.Encode(dest, img, nil)
+							if err != nil {
+								log.Printf("Error encoding JPEG for transcoding: %v", err)
+							}
+							log.Printf("Successfully transcoded screenshot to: %s", filePath)
+						case ".bmp":
+							err = bmp.Encode(dest, img)
+							if err != nil {
+								log.Printf("Error encoding BMP for transcoding: %v", err)
+							}
+							log.Printf("Successfully transcoded screenshot to: %s", filePath)
+						default:
+							log.Printf("Unsupported file format: %s", ext)
+					}
+				}
+			}
+		}
+
+		if Config.PostProcessing.PostCommand != "" {
+			postCmdStr := replaceVariablesInCommand(Config.PostProcessing.PostCommand, map[string]string{
+				"screenshot":    cacheScreenshot,
+				"wallpaperPath": wallpaperPath,
+				"wallpaperId":   path.Base(wallpaperPath),
+				"volume":        strconv.FormatFloat(volume, 'f', 0, 64),
+			})
+
+			log.Printf("Post-processing command: %s", postCmdStr)
+
+			pid, err := runDetachedProcess("sh", "-c", postCmdStr)
+			if err != nil {
+				log.Printf("Error starting post-processing command '%s': %v", postCmdStr, err)
+			} else {
+				log.Printf("Successfully started post-processing command (PID: %d): %s", pid, postCmdStr)
+			}
 		}
 
 		// set swww wallpaper if enabled
