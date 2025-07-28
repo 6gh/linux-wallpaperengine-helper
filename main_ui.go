@@ -41,11 +41,12 @@ type ProjectJSON struct {
 }
 
 var WallpaperItems []WallpaperItem
-var ImageClickSignalHandlers []glib.SignalHandle
 var FlowBox *gtk.FlowBox
+var PropertiesBox *gtk.FlowBox
 var Window *gtk.ApplicationWindow
 var StatusText *gtk.Label = nil
 var SearchQuery string = ""
+var SelectedWallpaperItemId string = ""
 
 func activate(app *gtk.Application) {
 	Window = gtk.NewApplicationWindow(app)
@@ -63,6 +64,32 @@ func activate(app *gtk.Application) {
 	FlowBox.SetMarginBottom(10)
 	FlowBox.SetMarginStart(10)
 	FlowBox.SetMarginEnd(10)
+
+	FlowBoxEscKey := gtk.NewEventControllerKey()
+	FlowBox.AddController(FlowBoxEscKey)
+	FlowBoxEscKey.Connect("key-pressed", func(controller *gtk.EventControllerKey, keyval uint, keycode uint, state gdk.ModifierType) {
+		if keyval == gdk.KEY_Escape {
+			FlowBox.UnselectAll()
+			SelectedWallpaperItemId = ""
+			PropertiesBox.RemoveAll()
+			PropertiesBox.SetVisible(false)
+		}
+	})
+
+	PropertiesBox = gtk.NewFlowBox()
+	PropertiesBox.SetSizeRequest(400, 128)
+	PropertiesBox.SetHExpand(false)
+	PropertiesBox.SetVExpand(false)
+	PropertiesBox.SetSelectionMode(gtk.SelectionNone)
+	PropertiesBox.SetHomogeneous(false)
+	PropertiesBox.SetColumnSpacing(12)
+	PropertiesBox.SetRowSpacing(12)
+	// PropertiesBox.SetMaxChildrenPerLine(2)
+	PropertiesBox.SetHAlign(gtk.AlignCenter)
+	PropertiesBox.SetVAlign(gtk.AlignStart)
+	PropertiesBox.SetVisible(false)
+	PropertiesBox.SetMarginTop(4)
+	PropertiesBox.SetMarginBottom(4)
 
 	topControlBar := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	topControlBar.SetHAlign(gtk.AlignCenter)
@@ -187,6 +214,7 @@ func activate(app *gtk.Application) {
 	scrolledWindow.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
 	scrolledWindow.SetMinContentHeight(600)
 	scrolledWindow.SetMinContentWidth(800)
+	scrolledWindow.SetHExpand(true)
 	scrolledWindow.SetVExpand(true)
 	scrolledWindow.SetChild(FlowBox)
 
@@ -202,11 +230,121 @@ func activate(app *gtk.Application) {
 	vBox.Append(topControlBar)
 	vBox.Append(StatusText)
 	vBox.Append(scrolledWindow)
+	vBox.Append(PropertiesBox)
 	vBox.Append(bottomControlBar)
 
 	Window.SetChild(vBox)
 	Window.SetDefaultSize(800, 600)
 	Window.SetVisible(true)
+}
+
+func reselectItem(unselect bool) {
+	log.Printf("Reselecting item with ID: %s", SelectedWallpaperItemId)
+	if SelectedWallpaperItemId != "" {
+		child := FlowBox.FirstChild()
+		found := false
+		for child != nil {
+			if flowBoxChild, ok := child.(*gtk.FlowBoxChild); ok {
+				if flowBoxChild.Child().(*gtk.Overlay).Child().(*gtk.Image).Name() == SelectedWallpaperItemId {
+					FlowBox.SelectChild(flowBoxChild)
+					child = nil
+					found = true
+				}
+				child = flowBoxChild.NextSibling()
+			} else {
+				log.Printf("Unexpected child type: %T", child)
+				child = nil
+			}
+		}
+
+		if !found && unselect {
+			FlowBox.UnselectAll()
+			SelectedWallpaperItemId = ""
+			PropertiesBox.RemoveAll()
+			PropertiesBox.SetVisible(false)
+		}
+	} else {
+		if unselect {
+			FlowBox.UnselectAll()
+			SelectedWallpaperItemId = ""
+			PropertiesBox.RemoveAll()
+			PropertiesBox.SetVisible(false)
+		}
+	}
+}
+
+func escapeMarkup(input string) string {
+	input = strings.ReplaceAll(input, "&", "&amp;")
+	input = strings.ReplaceAll(input, "<", "&lt;")
+	input = strings.ReplaceAll(input, ">", "&gt;")
+	return input
+}
+
+func showDetails(wallpaperItem *WallpaperItem) {
+	PropertiesBox.RemoveAll()
+
+	PropertiesBox.SetSizeRequest(-1, 128)
+	PropertiesBox.SetHExpand(true)
+	PropertiesBox.SetVExpand(false)
+	PropertiesBox.SetMarginTop(4)
+	PropertiesBox.SetMarginBottom(4)
+	
+	thumbnail := gtk.NewImage()
+	thumbnail.SetHAlign(gtk.AlignCenter)
+	thumbnail.SetVAlign(gtk.AlignCenter)
+	thumbnail.SetSizeRequest(128, 128) // Fixed thumbnail size
+	thumbnail.SetHExpand(false)
+	thumbnail.SetVExpand(false)
+	loadImageAsync(wallpaperItem.CachedPath, thumbnail, 128)
+	
+	labelsBox := gtk.NewBox(gtk.OrientationVertical, 0)
+	labelsBox.SetHAlign(gtk.AlignStart)
+	labelsBox.SetVAlign(gtk.AlignStart)
+	labelsBox.SetHExpand(true)
+	labelsBox.SetVExpand(true)
+
+	if wallpaperItem.projectJson.Title != "" {
+		titleLabel := gtk.NewLabel(wallpaperItem.projectJson.Title)
+		titleLabel.SetMarkup("<span weight=\"bold\" size=\"large\">" + escapeMarkup(titleLabel.Text()) + "</span>")
+		titleLabel.SetHAlign(gtk.AlignStart)
+		titleLabel.SetVAlign(gtk.AlignStart)
+		titleLabel.SetMarginBottom(4)
+		titleLabel.SetMarginTop(4)
+		titleLabel.SetSelectable(true)
+		labelsBox.Append(titleLabel)
+	}
+	if len(wallpaperItem.projectJson.Tags) > 0 {
+		tagsLabel := gtk.NewLabel(strings.Join(wallpaperItem.projectJson.Tags, ", "))
+		tagsLabel.SetSelectable(true)
+		tagsLabel.SetMarkup("<span size=\"small\"><i>" + escapeMarkup(tagsLabel.Text()) + "</i></span>")
+		tagsLabel.SetHAlign(gtk.AlignStart)
+		tagsLabel.SetVAlign(gtk.AlignStart)
+		tagsLabel.SetMarginBottom(4)
+		tagsLabel.SetMarginTop(4)
+		labelsBox.Append(tagsLabel)
+	}
+	if wallpaperItem.projectJson.Description != "" {
+		descriptionScrollable := gtk.NewScrolledWindow()
+		descriptionScrollable.SetPolicy(gtk.PolicyAutomatic, gtk.PolicyAutomatic)
+		descriptionScrollable.SetMaxContentHeight(60) // Limit height to trigger vertical scrolling
+		descriptionLabel := gtk.NewLabel(wallpaperItem.projectJson.Description)
+		descriptionLabel.SetHAlign(gtk.AlignStart)
+		descriptionLabel.SetVAlign(gtk.AlignStart)
+		descriptionLabel.SetMarginBottom(4)
+		descriptionLabel.SetMarginTop(4)
+		descriptionLabel.SetWrap(true)
+		descriptionLabel.SetWrapMode(2) // PANGO_WRAP_WORD
+		descriptionLabel.SetSelectable(true)
+		descriptionScrollable.SetChild(descriptionLabel)
+		labelsBox.Append(descriptionScrollable)
+		descriptionScrollable.SetHExpand(true)
+		descriptionScrollable.SetVExpand(true)
+	}
+
+	PropertiesBox.Append(thumbnail)
+	PropertiesBox.Append(labelsBox)
+	PropertiesBox.SetVisible(true)
+	log.Printf("Showing details for wallpaper: %s", wallpaperItem.WallpaperID)
 }
 
 func cacheImage(imagePath string, cachedThumbnailPath string) {
@@ -464,7 +602,7 @@ func refreshWallpaperDisplay() {
 			imageWidget.SetMarginStart(10)
 			imageWidget.SetMarginEnd(10)
 			imageWidget.SetName(wallpaperItem.WallpaperID)
-			imageWidget.SetTooltipText(wallpaperItem.projectJson.Title + "\n" + wallpaperItem.projectJson.Description + "\n" + strings.Join(wallpaperItem.projectJson.Tags, ", ") + "\n" + wallpaperItem.WallpaperID) // set the wallpaper ID as tooltip text
+			imageWidget.SetTooltipText(wallpaperItem.projectJson.Title)
 
 			if wallpaperItem.IsFavorite {
 				// if the wallpaper is a favorite, add a heart icon to the top right of the image
@@ -495,6 +633,8 @@ func refreshWallpaperDisplay() {
 	// filterWallpapers will already hide broken wallpapers if Config.SavedUIState.HideBroken is true
 	// so we just filter by search query if it is set
 	filterWallpapersBySearch(SearchQuery)
+
+	reselectItem(true)
 }
 
 func filterWallpapersBySearch(query string) {
@@ -564,6 +704,7 @@ func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFa
 	// toggle_favorite action
 	toggleFavoriteAction := gio.NewSimpleAction("toggle_favorite", nil)
 	toggleFavoriteAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		SelectedWallpaperItemId = wallpaperItem.WallpaperID
 		if isFavorite {
 			log.Printf("Removing %s from favorites", wallpaperItem.WallpaperID)
 			wallpaperItem.IsFavorite = false
@@ -588,6 +729,7 @@ func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFa
 	// toggle_broken action
 	toggleBrokenAction := gio.NewSimpleAction("toggle_broken", nil)
 	toggleBrokenAction.Connect("activate", func(_ *gio.SimpleAction, _ any) {
+		SelectedWallpaperItemId = wallpaperItem.WallpaperID
 		if isBroken {
 			log.Printf("Marking %s as not broken", wallpaperItem.WallpaperID)
 			wallpaperItem.IsBroken = false
@@ -687,6 +829,8 @@ func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFa
 	leftClickGesture := gtk.NewGestureClick()
 	leftClickGesture.SetButton(1)
 	leftClickGesture.ConnectReleased(func(nPress int, x, y float64) {
+		SelectedWallpaperItemId = wallpaperItem.WallpaperID
+		showDetails(wallpaperItem)
 		if nPress == 2 {
 			log.Println("Double-click detected, applying wallpaper:", wallpaperItem.WallpaperID)
 			wallpaperDir := Config.Constants.WallpaperEngineDir
@@ -698,3 +842,4 @@ func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFa
 
 	log.Println("Context menu attached to image widget for wallpaper:", wallpaperItem.WallpaperID)
 }
+
