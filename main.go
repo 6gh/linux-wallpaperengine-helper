@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"time"
 
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -51,23 +52,62 @@ func main() {
 					Aliases: []string{"r"},
 					Usage: "Restore the last set wallpaper set in the config",
 					Flags: []cli.Flag{
-						&cli.BoolFlag{
-							Name: "skip-post-processing",
-							Aliases: []string{"sp"},
-							Usage: "Skip post-processing step when restoring wallpaper",
+						&cli.BoolWithInverseFlag{
+							Name: "post-processing",
+							Usage: "Override post-processing step, e.g. --post-processing=true or --no-post-processing. Setting this to false will skip post-processing entirely.",
+							Category: "Post Processing",
+							Required: false,
+							OnlyOnce: true,
+							Action: func(ctx context.Context, c *cli.Command, value bool) error {
+								log.Printf("PostProcessing.Enabled set to %v", value)
+								Config.PostProcessing.Enabled = value
+								return nil
+							},
+						},
+						&cli.DurationFlag{
+							Name: "artificial-delay",
+							Aliases: []string{"delay"},
+							Usage: "Override artificial delay in seconds to wait before post-processing, e.g. --artificial-delay=2s",
+							Category: "Post Processing",
+							Action: func(ctx context.Context, c *cli.Command, value time.Duration) error {
+								log.Printf("PostProcessing.ArtificialDelay set to %vs", int64(value.Seconds()))
+								Config.PostProcessing.ArtificialDelay = int64(value.Seconds())
+								return nil
+							},
+						},
+						&cli.StringSliceFlag{
+							Name: "screenshot",
+							Usage: "Override screenshot files to copy output screenshot to, e.g. --screenshot=/path/to/screenshot.png --screenshot=/path/to/another.jpg",
+							TakesFile: true,
+							Category: "Post Processing",
+							Action: func(ctx context.Context, c *cli.Command, value []string) error {
+								log.Printf("PostProcessing.ScreenshotFiles set to %v", value)
+								Config.PostProcessing.ScreenshotFiles = value
+								return nil
+							},
+						},
+						&cli.StringFlag{
+							Name: "post-command",
+							Aliases: []string{"command"},
+							Usage: "Override post-command to run, e.g. --post-command=your-command",
+							Category: "Post Processing",
+							Action: func(ctx context.Context, c *cli.Command, value string) error {
+								Config.PostProcessing.PostCommand = value
+								return nil
+							},
+						},
+						&cli.BoolWithInverseFlag{
+							Name: "swww",
+							Usage: "Override whether to set the wallpaper using swww after applying the wallpaper, e.g. --swww or --no-swww",
+							Category: "Post Processing",
+							Action: func(ctx context.Context, c *cli.Command, value bool) error {
+								log.Printf("PostProcessing.SetSWWW set to %v", value)
+								Config.PostProcessing.SetSWWW = value
+								return nil
+							},
 						},
 					},
 					Action: func(ctx context.Context, c *cli.Command) error {
-						oldPostProcessingEnabled := Config.PostProcessing.Enabled
-						defer func() {
-							log.Printf("Restoring PostProcessing.Enabled to %v", oldPostProcessingEnabled)
-							Config.PostProcessing.Enabled = oldPostProcessingEnabled
-						}()
-						if oldPostProcessingEnabled && c.Bool("skip-post-processing") {
-							log.Println("Skipping post-processing step as requested.")
-							Config.PostProcessing.Enabled = false
-						}
-
 						if !restoreWallpaper() {
 							log.Println("Failed to restore last set wallpaper.")
 							return cli.Exit("Failed to restore last set wallpaper.", 1)
