@@ -68,7 +68,7 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 	settingWallpaper = true
 
 	defer func() {
-		updateGUIStatusText("Select a wallpaper to apply it.")
+		updateGUIStatusText("Double-click a wallpaper to apply it.")
 		settingWallpaper = false
 	}()
 

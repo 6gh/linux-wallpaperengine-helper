@@ -190,7 +190,7 @@ func activate(app *gtk.Application) {
 	scrolledWindow.SetVExpand(true)
 	scrolledWindow.SetChild(FlowBox)
 
-	StatusText = gtk.NewLabel("Select a wallpaper to apply it.")
+	StatusText = gtk.NewLabel("Double-click a wallpaper to apply it.")
 	StatusText.SetHAlign(gtk.AlignCenter)
 	StatusText.SetVAlign(gtk.AlignStart)
 	StatusText.SetMarginTop(4)
@@ -450,29 +450,6 @@ func reloadWallpaperData() error {
 func refreshWallpaperDisplay() {
 	FlowBox.RemoveAll()
 
-	// remove all previous child-activated signal handlers
-	// else we would have multiple handlers for the same signal
-	// causing multiple wallpapers to be applied on click
-	for _, id := range ImageClickSignalHandlers {
-		FlowBox.HandlerDisconnect(id)
-	}
-
-	signalHandler := FlowBox.Connect("child-activated", func(box *gtk.FlowBox, child *gtk.FlowBoxChild) {
-		if child == nil {
-			return
-		}
-		// Retrieve the wallpaper ID from the tooltip text of the activated image
-		wallpaperId := child.Child().(*gtk.Overlay).Child().(*gtk.Image).Name()
-		if wallpaperId == "" {
-			log.Println("[WARN] No wallpaper ID found for the activated child.")
-			return
-		}
-		log.Println("Applying wallpaper:", wallpaperId)
-		fullWallpaperPath := path.Join(Config.Constants.WallpaperEngineDir, wallpaperId) 
-		go applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
-	})
-	ImageClickSignalHandlers = append(ImageClickSignalHandlers, signalHandler)
-
 	sortWallpaperItems()
 
 	for _, wallpaperItem := range WallpaperItems {
@@ -508,7 +485,7 @@ func refreshWallpaperDisplay() {
 
 			iconOverlay.SetChild(imageWidget)
 
-			attachContextMenu(iconOverlay, &wallpaperItem, wallpaperItem.IsFavorite, wallpaperItem.IsBroken)
+			attachGestures(iconOverlay, &wallpaperItem, wallpaperItem.IsFavorite, wallpaperItem.IsBroken)
 
 			FlowBox.Append(iconOverlay)
 			loadImageAsync(wallpaperItem.CachedPath, imageWidget, 128)
@@ -571,7 +548,7 @@ func filterWallpapers(predicate func(WallpaperItem) bool) {
 	}
 }
 
-func attachContextMenu(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFavorite bool, isBroken bool) {
+func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFavorite bool, isBroken bool) {
 	actionGroup := gio.NewSimpleActionGroup()
 
 	// apply action
@@ -670,10 +647,10 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, i
 
 	imageWidget.InsertActionGroup(wallpaperItem.WallpaperID, actionGroup)
 
-	gesture := gtk.NewGestureClick()
-	gesture.SetButton(3)
-	imageWidget.AddController(gesture)
-	gesture.ConnectReleased(func(nPress int, x, y float64) {
+	rightClickGesture := gtk.NewGestureClick()
+	rightClickGesture.SetButton(3)
+	imageWidget.AddController(rightClickGesture)
+	rightClickGesture.ConnectReleased(func(nPress int, x, y float64) {
 		if nPress == 1 { // ensure single click
 			// context menu for the image
 			contextMenuModel := gio.NewMenu()
@@ -706,6 +683,18 @@ func attachContextMenu(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, i
 			contextMenu.Popup()
 		}
 	})
+
+	leftClickGesture := gtk.NewGestureClick()
+	leftClickGesture.SetButton(1)
+	leftClickGesture.ConnectReleased(func(nPress int, x, y float64) {
+		if nPress == 2 {
+			log.Println("Double-click detected, applying wallpaper:", wallpaperItem.WallpaperID)
+			wallpaperDir := Config.Constants.WallpaperEngineDir
+			fullWallpaperPath := path.Join(wallpaperDir, wallpaperItem.WallpaperID)
+			go applyWallpaper(fullWallpaperPath, float64(Config.SavedUIState.Volume))
+		}
+	})
+	imageWidget.AddController(leftClickGesture)
 
 	log.Println("Context menu attached to image widget for wallpaper:", wallpaperItem.WallpaperID)
 }
