@@ -54,7 +54,7 @@ func main() {
 					Flags: []cli.Flag{
 						&cli.BoolWithInverseFlag{
 							Name: "post-processing",
-							Usage: "Override post-processing step, e.g. --post-processing=true or --no-post-processing. Setting this to false will skip post-processing entirely.",
+							Usage: "Override post-processing step, e.g. --post-processing or --no-post-processing. Setting this to false will skip post-processing entirely.",
 							Category: "Post Processing",
 							Required: false,
 							OnlyOnce: true,
@@ -89,7 +89,7 @@ func main() {
 						&cli.StringFlag{
 							Name: "post-command",
 							Aliases: []string{"command"},
-							Usage: "Override post-command to run, e.g. --post-command=your-command",
+							Usage: "Override post-command to run, e.g. --post-command='your-command'",
 							Category: "Post Processing",
 							Action: func(ctx context.Context, c *cli.Command, value string) error {
 								Config.PostProcessing.PostCommand = value

@@ -30,14 +30,14 @@ type WallpaperItem struct {
 	ModTime       time.Time
 
 	// get from project.json
-	projectJson   ProjectJSON
+	projectJson ProjectJSON
 }
 
 type ProjectJSON struct {
-	Title         string   `json:"title"`
-	Description   string   `json:"description"`
-	Tags          []string `json:"tags"`
-	PreviewImage  string   `json:"preview"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	Tags         []string `json:"tags"`
+	PreviewImage string   `json:"preview"`
 }
 
 var WallpaperItems []WallpaperItem
@@ -98,7 +98,8 @@ func activate(app *gtk.Application) {
 	topControlBar.SetMarginBottom(10)
 	topControlBar.SetMarginStart(10)
 	topControlBar.SetMarginEnd(10)
-	
+	topControlBar.SetSpacing(4)
+
 	refreshButton := gtk.NewButtonWithLabel("Refresh")
 	refreshButton.SetHAlign(gtk.AlignStart)
 	refreshButton.SetVAlign(gtk.AlignCenter)
@@ -174,7 +175,7 @@ func activate(app *gtk.Application) {
 		Window.Close()
 	})
 	topControlBar.Append(exitButton)
-	
+
 	bottomControlBar := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	bottomControlBar.SetHAlign(gtk.AlignCenter)
 	bottomControlBar.SetVAlign(gtk.AlignEnd)
@@ -182,6 +183,7 @@ func activate(app *gtk.Application) {
 	bottomControlBar.SetMarginBottom(10)
 	bottomControlBar.SetMarginStart(10)
 	bottomControlBar.SetMarginEnd(10)
+	bottomControlBar.SetSpacing(4)
 
 	// volume control
 	volumeContainer := gtk.NewBox(gtk.OrientationVertical, 0)
@@ -288,7 +290,7 @@ func showDetails(wallpaperItem *WallpaperItem) {
 	PropertiesBox.SetVExpand(false)
 	PropertiesBox.SetMarginTop(4)
 	PropertiesBox.SetMarginBottom(4)
-	
+
 	thumbnail := gtk.NewImage()
 	thumbnail.SetHAlign(gtk.AlignCenter)
 	thumbnail.SetVAlign(gtk.AlignCenter)
@@ -296,7 +298,7 @@ func showDetails(wallpaperItem *WallpaperItem) {
 	thumbnail.SetHExpand(false)
 	thumbnail.SetVExpand(false)
 	loadImageAsync(wallpaperItem.CachedPath, thumbnail, 128)
-	
+
 	labelsBox := gtk.NewBox(gtk.OrientationVertical, 0)
 	labelsBox.SetHAlign(gtk.AlignStart)
 	labelsBox.SetVAlign(gtk.AlignStart)
@@ -399,7 +401,7 @@ func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 		}
 
 		// convert to pixbuf
-		pixbuf,err := gdkpixbuf.NewPixbufFromFile(cachedThumbnailPath)
+		pixbuf, err := gdkpixbuf.NewPixbufFromFile(cachedThumbnailPath)
 		if err != nil {
 			log.Printf("Error creating GdkPixbuf from file %s: %v", cachedThumbnailPath, err)
 			return
@@ -451,23 +453,23 @@ func sortByName(descending bool) {
 func sortWallpaperItems() {
 	// sort by date modified, newest first
 	switch Config.SavedUIState.SortBy {
-		case "date_desc":
-			sortByDate(true)
-		case "date_asc":
-			sortByDate(false)
-		case "name_desc":
-			sortByName(true)
-		case "name_asc":
-			sortByName(false)
-		default:
-			log.Printf("Unknown sort criteria: %s, defaulting to date_desc", Config.SavedUIState.SortBy)
-			sortByDate(true)
+	case "date_desc":
+		sortByDate(true)
+	case "date_asc":
+		sortByDate(false)
+	case "name_desc":
+		sortByName(true)
+	case "name_asc":
+		sortByName(false)
+	default:
+		log.Printf("Unknown sort criteria: %s, defaulting to date_desc", Config.SavedUIState.SortBy)
+		sortByDate(true)
 	}
 
 	// put favorites first
 	sort.SliceStable(WallpaperItems, func(i, j int) bool {
 		if WallpaperItems[i].IsFavorite && !WallpaperItems[j].IsFavorite {
-			return true 
+			return true
 		} else {
 			return false
 		}
@@ -572,13 +574,13 @@ func reloadWallpaperData() error {
 		}
 
 		WallpaperItems = append(WallpaperItems, WallpaperItem{
-			projectJson: projectJson,
-			WallpaperID: wallpaperFolder.Name(),
+			projectJson:   projectJson,
+			WallpaperID:   wallpaperFolder.Name(),
 			WallpaperPath: wallpaperPath,
-			CachedPath: cachedImagePath,
-			IsFavorite: slices.Contains(Config.SavedUIState.Favorites, wallpaperFolder.Name()),
-			IsBroken: slices.Contains(Config.SavedUIState.Broken, wallpaperFolder.Name()),
-			ModTime:   modTime,
+			CachedPath:    cachedImagePath,
+			IsFavorite:    slices.Contains(Config.SavedUIState.Favorites, wallpaperFolder.Name()),
+			IsBroken:      slices.Contains(Config.SavedUIState.Broken, wallpaperFolder.Name()),
+			ModTime:       modTime,
 		})
 	}
 
@@ -606,7 +608,7 @@ func refreshWallpaperDisplay() {
 
 			if wallpaperItem.IsFavorite {
 				// if the wallpaper is a favorite, add a heart icon to the top right of the image
-				favoriteIcon := gtk.NewImageFromIconName("emote-love-symbolic")
+				favoriteIcon := gtk.NewImageFromIconName("starred-symbolic")
 				favoriteIcon.SetPixelSize(24)
 				favoriteIcon.SetHAlign(gtk.AlignEnd)
 				favoriteIcon.SetVAlign(gtk.AlignStart)
@@ -720,7 +722,7 @@ func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFa
 				WallpaperItems[i].IsFavorite = wallpaperItem.IsFavorite
 				break
 			}
-    }
+		}
 
 		refreshWallpaperDisplay()
 	})
@@ -740,12 +742,12 @@ func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFa
 			Config.SavedUIState.Broken = append(Config.SavedUIState.Broken, wallpaperItem.WallpaperID)
 		}
 
-		for i := range WallpaperItems {	
+		for i := range WallpaperItems {
 			if WallpaperItems[i].WallpaperID == wallpaperItem.WallpaperID {
 				WallpaperItems[i].IsBroken = wallpaperItem.IsBroken
 				break
 			}
-    }
+		}
 
 		refreshWallpaperDisplay()
 	})
@@ -797,19 +799,19 @@ func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFa
 			// context menu for the image
 			contextMenuModel := gio.NewMenu()
 
-			contextMenuModel.Append("Apply Wallpaper", wallpaperItem.WallpaperID + ".apply")
+			contextMenuModel.Append("Apply Wallpaper", wallpaperItem.WallpaperID+".apply")
 			if isFavorite {
-				contextMenuModel.Append("Remove from Favorites", wallpaperItem.WallpaperID + ".toggle_favorite")
+				contextMenuModel.Append("Remove from Favorites", wallpaperItem.WallpaperID+".toggle_favorite")
 			} else {
-				contextMenuModel.Append("Add to Favorites", wallpaperItem.WallpaperID + ".toggle_favorite")
+				contextMenuModel.Append("Add to Favorites", wallpaperItem.WallpaperID+".toggle_favorite")
 			}
 			if isBroken {
-				contextMenuModel.Append("Unmark as Broken", wallpaperItem.WallpaperID + ".toggle_broken")
+				contextMenuModel.Append("Unmark as Broken", wallpaperItem.WallpaperID+".toggle_broken")
 			} else {
-				contextMenuModel.Append("Mark as Broken", wallpaperItem.WallpaperID + ".toggle_broken")
+				contextMenuModel.Append("Mark as Broken", wallpaperItem.WallpaperID+".toggle_broken")
 			}
-			contextMenuModel.Append("Open Wallpaper Directory", wallpaperItem.WallpaperID + ".open_directory")
-			contextMenuModel.Append("Copy Command to Clipboard", wallpaperItem.WallpaperID + ".copy_command")
+			contextMenuModel.Append("Open Wallpaper Directory", wallpaperItem.WallpaperID+".open_directory")
+			contextMenuModel.Append("Copy Command to Clipboard", wallpaperItem.WallpaperID+".copy_command")
 
 			contextMenu := gtk.NewPopoverMenuFromModel(contextMenuModel)
 			contextMenu.SetParent(imageWidget)
@@ -819,8 +821,8 @@ func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFa
 			contextMenu.SetPointingTo(&rect)
 
 			// makes the popover appear at the bottom of the cursor
-			contextMenu.SetPosition(gtk.PosBottom) 
-			contextMenu.SetHasArrow(true) 
+			contextMenu.SetPosition(gtk.PosBottom)
+			contextMenu.SetHasArrow(true)
 
 			contextMenu.Popup()
 		}
@@ -842,4 +844,3 @@ func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFa
 
 	log.Println("Context menu attached to image widget for wallpaper:", wallpaperItem.WallpaperID)
 }
-

@@ -39,6 +39,11 @@ type ConfigStruct struct {
 }
 
 func NewDefaultConfig(configDir string) *ConfigStruct {
+	screenshotFiles := []string{}
+	if configDir != "" {
+		screenshotFiles = append(screenshotFiles, path.Join(configDir, "screenshot.png"))
+	}
+
 	return &ConfigStruct{
 		Constants: ConstantsStruct{
 			DiscardProcessLogs:       true,
@@ -49,7 +54,7 @@ func NewDefaultConfig(configDir string) *ConfigStruct {
 		PostProcessing: PostProcessingStruct{
 			Enabled:         false,
 			ArtificialDelay: 1,
-			ScreenshotFiles:  []string{path.Join(configDir, "screenshot.png")},
+			ScreenshotFiles:  screenshotFiles,
 			PostCommand:     "",
 		},
 		SavedUIState: SavedUIStateStruct{
@@ -98,12 +103,29 @@ func readOrCreateConfig(configFile string, config *ConfigStruct) error {
 	return nil
 }
 
+// Makes sure required fields are set
+func validateConfig() {
+  defaultConfig := NewDefaultConfig("")
+
+	if Config.Constants.LinuxWallpaperEngineBin == "" {
+		Config.Constants.LinuxWallpaperEngineBin = defaultConfig.Constants.LinuxWallpaperEngineBin
+	}
+	if Config.Constants.WallpaperEngineDir == "" {
+		Config.Constants.WallpaperEngineDir = defaultConfig.Constants.WallpaperEngineDir
+	}
+	if Config.Constants.WallpaperEngineAssets == "" {
+		Config.Constants.WallpaperEngineAssets = defaultConfig.Constants.WallpaperEngineAssets
+	}
+}
+
 func saveConfig() {
 	configDir, err := ensureConfigDir()
 	if err != nil {
 		log.Printf("Failed to ensure config directory: %v", err)
 		return
 	}
+
+	validateConfig()
 
 	configFile := path.Join(configDir, "config.toml")
 	content, err := toml.Marshal(Config)
