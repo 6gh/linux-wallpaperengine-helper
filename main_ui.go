@@ -51,6 +51,7 @@ var SelectedWallpaperItemId string = ""
 func activate(app *gtk.Application) {
 	Window = gtk.NewApplicationWindow(app)
 	Window.SetTitle("Linux Wallpaper Engine Helper")
+	setupIconStyling()
 
 	FlowBox = gtk.NewFlowBox()
 	FlowBox.SetSelectionMode(gtk.SelectionSingle)
@@ -238,6 +239,26 @@ func activate(app *gtk.Application) {
 	Window.SetChild(vBox)
 	Window.SetDefaultSize(800, 600)
 	Window.SetVisible(true)
+}
+
+func setupIconStyling() {
+	cssProvider := gtk.NewCSSProvider()
+	css := `
+    .favorite-icon {
+			color: #d1b100ff;
+    }
+    
+    .warning-icon {
+			color: #ab0000ff;
+    }
+    `
+
+	cssProvider.LoadFromString(css)
+	gtk.StyleContextAddProviderForDisplay(
+		gdk.DisplayGetDefault(),
+		cssProvider,
+		gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+	)
 }
 
 func reselectItem(unselect bool) {
@@ -605,24 +626,29 @@ func refreshWallpaperDisplay() {
 			imageWidget.SetMarginEnd(10)
 			imageWidget.SetName(wallpaperItem.WallpaperID)
 			imageWidget.SetTooltipText(wallpaperItem.projectJson.Title)
+			statusIcons := gtk.NewFlowBox()
+			statusIcons.SetSelectionMode(gtk.SelectionNone)
+			statusIcons.SetHAlign(gtk.AlignEnd)
+			statusIcons.SetVAlign(gtk.AlignStart)
 
 			if wallpaperItem.IsFavorite {
 				// if the wallpaper is a favorite, add a heart icon to the top right of the image
 				favoriteIcon := gtk.NewImageFromIconName("starred-symbolic")
 				favoriteIcon.SetPixelSize(24)
-				favoriteIcon.SetHAlign(gtk.AlignEnd)
-				favoriteIcon.SetVAlign(gtk.AlignStart)
-				iconOverlay.AddOverlay(favoriteIcon)
+				favoriteIcon.AddCSSClass("favorite-icon")
+				statusIcons.Append(favoriteIcon)
 			}
 			if wallpaperItem.IsBroken {
 				// if the wallpaper is marked as broken, add a warning icon to the top right of the image
 				warningIcon := gtk.NewImageFromIconName("dialog-warning-symbolic")
 				warningIcon.SetPixelSize(24)
-				warningIcon.SetHAlign(gtk.AlignEnd)
-				warningIcon.SetVAlign(gtk.AlignStart)
-				iconOverlay.AddOverlay(warningIcon)
+				warningIcon.AddCSSClass("warning-icon")
+				statusIcons.Append(warningIcon)
 			}
 
+			if statusIcons.FirstChild() != nil {
+				iconOverlay.AddOverlay(statusIcons)
+			}
 			iconOverlay.SetChild(imageWidget)
 
 			attachGestures(iconOverlay, &wallpaperItem, wallpaperItem.IsFavorite, wallpaperItem.IsBroken)
