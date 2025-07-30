@@ -9,10 +9,10 @@ import (
 )
 
 type ConstantsStruct struct {
-	DiscardProcessLogs       bool   `toml:"discard_process_logs"      comment:"Whether to pipe detached processes' logs to /dev/null"`
-	LinuxWallpaperEngineBin  string `toml:"linux_wallpaperengine_bin" comment:"The absolute path to the binary, in case the binary isn't in PATH"`
-	WallpaperEngineDir       string `toml:"wallpaper_engine_dir"      comment:"The absolute path to the workshop content directory of Wallpaper Engine; where the wallpapers are stored"`
-	WallpaperEngineAssets    string `toml:"wallpaper_engine_assets"   comment:"The absolute path to the assets directory of Wallpaper Engine; https://github.com/Almamu/linux-wallpaperengine#1-get-wallpaper-engine-assets"`
+	DiscardProcessLogs      bool   `toml:"discard_process_logs"      comment:"Whether to pipe detached processes' logs to /dev/null"`
+	LinuxWallpaperEngineBin string `toml:"linux_wallpaperengine_bin" comment:"The absolute path to the binary, in case the binary isn't in PATH"`
+	WallpaperEngineDir      string `toml:"wallpaper_engine_dir"      comment:"The absolute path to the workshop content directory of Wallpaper Engine; where the wallpapers are stored"`
+	WallpaperEngineAssets   string `toml:"wallpaper_engine_assets"   comment:"The absolute path to the assets directory of Wallpaper Engine; https://github.com/Almamu/linux-wallpaperengine#1-get-wallpaper-engine-assets"`
 }
 
 type PostProcessingStruct struct {
@@ -38,6 +38,10 @@ type ConfigStruct struct {
 	SavedUIState   SavedUIStateStruct   `toml:"SavedUIState"`
 }
 
+// Creates a new default ConfigStruct with sensible defaults
+//
+// The first parameter is optional. If provided, the default screenshot file will be "screenshot.png" in the provided config directory.
+// If not provided, it will default to an empty slice.
 func NewDefaultConfig(configDir string) *ConfigStruct {
 	screenshotFiles := []string{}
 	if configDir != "" {
@@ -46,32 +50,37 @@ func NewDefaultConfig(configDir string) *ConfigStruct {
 
 	return &ConfigStruct{
 		Constants: ConstantsStruct{
-			DiscardProcessLogs:       true,
-			LinuxWallpaperEngineBin:  "linux-wallpaperengine",
-			WallpaperEngineDir:       path.Join(os.Getenv("HOME"), ".steam", "steam", "steamapps", "workshop", "content", "431960"),
-			WallpaperEngineAssets:    "",
+			DiscardProcessLogs:      true,
+			LinuxWallpaperEngineBin: "linux-wallpaperengine",
+			WallpaperEngineDir:      path.Join(os.Getenv("HOME"), ".steam", "steam", "steamapps", "workshop", "content", "431960"),
+			WallpaperEngineAssets:   "",
 		},
 		PostProcessing: PostProcessingStruct{
 			Enabled:         false,
-			ArtificialDelay: 1,
-			ScreenshotFiles:  screenshotFiles,
+			ArtificialDelay: 3,
+			ScreenshotFiles: screenshotFiles,
 			PostCommand:     "",
+			SetSWWW:         false,
 		},
 		SavedUIState: SavedUIStateStruct{
 			LastSetId:  "",
-			SortBy: 	  "date_desc",
+			SortBy:     "date_desc",
+			Volume:     100,
+			HideBroken: false,
 			Broken:     []string{},
 			Favorites:  []string{},
-			HideBroken: false,
-			Volume:     100,
 		},
 	}
 }
 
+// Ensures a config file at the given path.
+//
+// If the file exists, it will read the file and unmarshal it into the provided ConfigStruct.
+// If the file does not exist, it will create a new file with the provided ConfigStruct as default values.
+//
+// Returns an error if reading or writing the file fails.
 func readOrCreateConfig(configFile string, config *ConfigStruct) error {
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		log.Printf("Config file does not exist, creating default at: %s", configFile)
-
 		content, err := toml.Marshal(config)
 		if err != nil {
 			log.Fatalf("Failed to marshal config to TOML: %v", err)
@@ -86,7 +95,6 @@ func readOrCreateConfig(configFile string, config *ConfigStruct) error {
 
 		log.Printf("Default config file created at: %s", configFile)
 	} else {
-		log.Printf("Config file already exists at: %s", configFile)
 		content, err := os.ReadFile(configFile)
 		if err != nil {
 			log.Fatalf("Failed to read config file: %v", err)
@@ -103,9 +111,10 @@ func readOrCreateConfig(configFile string, config *ConfigStruct) error {
 	return nil
 }
 
-// Makes sure required fields are set
+// Makes sure required fields are set in the Config.
+// If some fields are invalid, it will correct them by setting them to the default.
 func validateConfig() {
-  defaultConfig := NewDefaultConfig("")
+	defaultConfig := NewDefaultConfig("")
 
 	if Config.Constants.LinuxWallpaperEngineBin == "" {
 		Config.Constants.LinuxWallpaperEngineBin = defaultConfig.Constants.LinuxWallpaperEngineBin
@@ -118,11 +127,13 @@ func validateConfig() {
 	}
 }
 
-func saveConfig() {
+// Saves the Config to config.toml in the config directory.
+// Ensures that the directory still exists in case the directory was removed while the app was running.
+func saveConfig() error {
 	configDir, err := ensureConfigDir()
 	if err != nil {
 		log.Printf("Failed to ensure config directory: %v", err)
-		return
+		return err
 	}
 
 	validateConfig()
@@ -131,14 +142,15 @@ func saveConfig() {
 	content, err := toml.Marshal(Config)
 	if err != nil {
 		log.Printf("Failed to marshal config to TOML: %v", err)
-		return
+		return err
 	}
 
 	err = os.WriteFile(configFile, content, 0644)
 	if err != nil {
 		log.Printf("Failed to write config file: %v", err)
-		return
+		return err
 	}
 
 	log.Printf("Config saved to: %s", configFile)
+	return nil
 }

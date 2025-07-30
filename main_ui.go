@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"log"
 	"os"
@@ -21,76 +22,23 @@ import (
 	"github.com/disintegration/imaging"
 )
 
-type WallpaperItem struct {
-	WallpaperID   string
-	WallpaperPath string
-	CachedPath    string
-	IsFavorite    bool
-	IsBroken      bool
-	ModTime       time.Time
-
-	// get from project.json
-	projectJson ProjectJSON
-}
-
-type ProjectJSON struct {
-	Title        string   `json:"title"`
-	Description  string   `json:"description"`
-	Tags         []string `json:"tags"`
-	PreviewImage string   `json:"preview"`
-}
-
-var WallpaperItems []WallpaperItem
-var FlowBox *gtk.FlowBox
-var PropertiesBox *gtk.FlowBox
-var Window *gtk.ApplicationWindow
-var StatusText *gtk.Label = nil
+var MainWindow *gtk.ApplicationWindow = nil
+var ScrolledWindow *gtk.ScrolledWindow = nil
 var SearchQuery string = ""
 var SelectedWallpaperItemId string = ""
+var StatusText *gtk.Label = nil
+var WallpaperPropertiesBox *gtk.FlowBox = nil
+var WallpaperList *gtk.FlowBox = nil
 
+// Main function to create the GTK application and set up the main window.
 func activate(app *gtk.Application) {
-	Window = gtk.NewApplicationWindow(app)
-	Window.SetTitle("Linux Wallpaper Engine Helper")
+	MainWindow = gtk.NewApplicationWindow(app)
+	MainWindow.SetTitle("Linux Wallpaper Engine Helper")
 	setupIconStyling()
 
-	FlowBox = gtk.NewFlowBox()
-	FlowBox.SetSelectionMode(gtk.SelectionSingle)
-	FlowBox.SetHomogeneous(true)
-	FlowBox.SetColumnSpacing(12)
-	FlowBox.SetRowSpacing(12)
-	FlowBox.SetMaxChildrenPerLine(8)
-	FlowBox.SetHAlign(gtk.AlignCenter)
-	FlowBox.SetVAlign(gtk.AlignStart)
-	FlowBox.SetMarginTop(10)
-	FlowBox.SetMarginBottom(10)
-	FlowBox.SetMarginStart(10)
-	FlowBox.SetMarginEnd(10)
-
-	FlowBoxEscKey := gtk.NewEventControllerKey()
-	FlowBox.AddController(FlowBoxEscKey)
-	FlowBoxEscKey.Connect("key-pressed", func(controller *gtk.EventControllerKey, keyval uint, keycode uint, state gdk.ModifierType) {
-		if keyval == gdk.KEY_Escape {
-			FlowBox.UnselectAll()
-			SelectedWallpaperItemId = ""
-			PropertiesBox.RemoveAll()
-			PropertiesBox.SetVisible(false)
-		}
-	})
-
-	PropertiesBox = gtk.NewFlowBox()
-	PropertiesBox.SetSizeRequest(400, 128)
-	PropertiesBox.SetHExpand(false)
-	PropertiesBox.SetVExpand(false)
-	PropertiesBox.SetSelectionMode(gtk.SelectionNone)
-	PropertiesBox.SetHomogeneous(false)
-	PropertiesBox.SetColumnSpacing(12)
-	PropertiesBox.SetRowSpacing(12)
-	// PropertiesBox.SetMaxChildrenPerLine(2)
-	PropertiesBox.SetHAlign(gtk.AlignCenter)
-	PropertiesBox.SetVAlign(gtk.AlignStart)
-	PropertiesBox.SetVisible(false)
-	PropertiesBox.SetMarginTop(4)
-	PropertiesBox.SetMarginBottom(4)
+	//ANCHOR - Top control bar
+	// This will contain the controls relating to the list or app itself
+	// Example: refresh, search, sort, etc.
 
 	topControlBar := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	topControlBar.SetHAlign(gtk.AlignCenter)
@@ -173,9 +121,25 @@ func activate(app *gtk.Application) {
 	exitButton.SetVAlign(gtk.AlignCenter)
 	exitButton.Connect("clicked", func() {
 		log.Println("Exiting application...")
-		Window.Close()
+		MainWindow.Close()
 	})
 	topControlBar.Append(exitButton)
+
+	//ANCHOR - Status text
+	// This will contain information as to what the app is doing at the moment
+	// Set this via updateGUIStatusText("Your message here")
+
+	StatusText = gtk.NewLabel("Double-click a wallpaper to apply it.")
+	StatusText.SetHAlign(gtk.AlignCenter)
+	StatusText.SetVAlign(gtk.AlignStart)
+	StatusText.SetMarginTop(4)
+	StatusText.SetMarginBottom(4)
+	StatusText.SetMarginStart(4)
+	StatusText.SetMarginEnd(4)
+
+	//ANCHOR - Bottom control bar
+	// This will contain controls related to settings applied to the application process
+	// Example: wallpaper volume, swww fit type, etc.
 
 	bottomControlBar := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	bottomControlBar.SetHAlign(gtk.AlignCenter)
@@ -186,7 +150,6 @@ func activate(app *gtk.Application) {
 	bottomControlBar.SetMarginEnd(10)
 	bottomControlBar.SetSpacing(4)
 
-	// volume control
 	volumeContainer := gtk.NewBox(gtk.OrientationVertical, 0)
 	volumeContainer.SetHExpand(true)
 	volumeContainer.SetHAlign(gtk.AlignStart)
@@ -210,48 +173,88 @@ func activate(app *gtk.Application) {
 	volumeContainer.Append(volumeSlider)
 	bottomControlBar.Append(volumeContainer)
 
-	reloadWallpaperData()
-	refreshWallpaperDisplay()
+	//ANCHOR - Wallpaper list
+	// This will contain the list of wallpapers
 
-	scrolledWindow := gtk.NewScrolledWindow()
-	scrolledWindow.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
-	scrolledWindow.SetMinContentHeight(600)
-	scrolledWindow.SetMinContentWidth(800)
-	scrolledWindow.SetHExpand(true)
-	scrolledWindow.SetVExpand(true)
-	scrolledWindow.SetChild(FlowBox)
+	WallpaperList = gtk.NewFlowBox()
+	WallpaperList.SetSelectionMode(gtk.SelectionSingle)
+	WallpaperList.SetHomogeneous(true)
+	WallpaperList.SetColumnSpacing(12)
+	WallpaperList.SetRowSpacing(12)
+	WallpaperList.SetMaxChildrenPerLine(8)
+	WallpaperList.SetHAlign(gtk.AlignCenter)
+	WallpaperList.SetVAlign(gtk.AlignStart)
+	WallpaperList.SetMarginTop(10)
+	WallpaperList.SetMarginBottom(10)
+	WallpaperList.SetMarginStart(10)
+	WallpaperList.SetMarginEnd(10)
 
-	StatusText = gtk.NewLabel("Double-click a wallpaper to apply it.")
-	StatusText.SetHAlign(gtk.AlignCenter)
-	StatusText.SetVAlign(gtk.AlignStart)
-	StatusText.SetMarginTop(4)
-	StatusText.SetMarginBottom(4)
-	StatusText.SetMarginStart(4)
-	StatusText.SetMarginEnd(4)
+	FlowBoxEscKey := gtk.NewEventControllerKey()
+	WallpaperList.AddController(FlowBoxEscKey)
+	FlowBoxEscKey.Connect("key-pressed", func(controller *gtk.EventControllerKey, keyval uint, keycode uint, state gdk.ModifierType) {
+		if keyval == gdk.KEY_Escape {
+			WallpaperList.UnselectAll()
+			SelectedWallpaperItemId = ""
+			WallpaperPropertiesBox.RemoveAll()
+			WallpaperPropertiesBox.SetVisible(false)
+		}
+	})
+
+	WallpaperPropertiesBox = gtk.NewFlowBox()
+	WallpaperPropertiesBox.SetSizeRequest(400, 128)
+	WallpaperPropertiesBox.SetHExpand(false)
+	WallpaperPropertiesBox.SetVExpand(false)
+	WallpaperPropertiesBox.SetSelectionMode(gtk.SelectionNone)
+	WallpaperPropertiesBox.SetHomogeneous(false)
+	WallpaperPropertiesBox.SetColumnSpacing(12)
+	WallpaperPropertiesBox.SetRowSpacing(12)
+	// PropertiesBox.SetMaxChildrenPerLine(2)
+	WallpaperPropertiesBox.SetHAlign(gtk.AlignCenter)
+	WallpaperPropertiesBox.SetVAlign(gtk.AlignStart)
+	WallpaperPropertiesBox.SetVisible(false)
+	WallpaperPropertiesBox.SetMarginTop(4)
+	WallpaperPropertiesBox.SetMarginBottom(4)
+
+	ScrolledWindow = gtk.NewScrolledWindow()
+	ScrolledWindow.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
+	ScrolledWindow.SetMinContentHeight(600)
+	ScrolledWindow.SetMinContentWidth(800)
+	ScrolledWindow.SetHExpand(true)
+	ScrolledWindow.SetVExpand(true)
+	ScrolledWindow.SetHAlign(gtk.AlignFill)
+	ScrolledWindow.SetChild(WallpaperList)
+
+	if err := reloadWallpaperData(); err != nil {
+		log.Printf("Error reloading wallpaper data: %v", err)
+		showFrontError(err.Error())
+	} else {
+		refreshWallpaperDisplay()
+	}
 
 	vBox := gtk.NewBox(gtk.OrientationVertical, 0)
 	vBox.Append(topControlBar)
 	vBox.Append(StatusText)
-	vBox.Append(scrolledWindow)
-	vBox.Append(PropertiesBox)
+	vBox.Append(ScrolledWindow)
+	vBox.Append(WallpaperPropertiesBox)
 	vBox.Append(bottomControlBar)
 
-	Window.SetChild(vBox)
-	Window.SetDefaultSize(800, 600)
-	Window.SetVisible(true)
+	MainWindow.SetChild(vBox)
+	MainWindow.SetDefaultSize(800, 600)
+	MainWindow.SetVisible(true)
 }
 
+// Helper function to provide custom CSS to the entire application.
 func setupIconStyling() {
 	cssProvider := gtk.NewCSSProvider()
 	css := `
-    .favorite-icon {
+		.favorite-icon {
 			color: #d1b100ff;
-    }
-    
-    .warning-icon {
+		}
+		
+		.error {
 			color: #ab0000ff;
-    }
-    `
+		}
+		`
 
 	cssProvider.LoadFromString(css)
 	gtk.StyleContextAddProviderForDisplay(
@@ -261,15 +264,55 @@ func setupIconStyling() {
 	)
 }
 
+// Helper function to replace the WallpaperList with an error message.
+func showFrontError(message string) {
+	WallpaperList.RemoveAll()
+	WallpaperList.SetVisible(false)
+	WallpaperPropertiesBox.SetVisible(false)
+
+	errorLabel := gtk.NewLabel(message)
+	errorLabel.SetHExpand(true)
+	errorLabel.SetVExpand(true)
+	errorLabel.SetHAlign(gtk.AlignCenter)
+	errorLabel.SetVAlign(gtk.AlignCenter)
+
+	ScrolledWindow.SetChild(errorLabel)
+	updateGUIStatusText("")
+}
+
+// Helper function to hide the error message and restore the WallpaperList.
+func hideFrontError() {
+	// Remove the error message and set the WallpaperList as the child of ScrolledWindow
+	ScrolledWindow.SetChild(WallpaperList)
+	WallpaperList.SetVisible(true)
+	updateGUIStatusText("Double-click a wallpaper to apply it.")
+
+	if SelectedWallpaperItemId != "" {
+		reselectItem(false)
+	}
+}
+
+// Updates the GUI status text (top label in the main view) with the given message.
+func updateGUIStatusText(message string) {
+	if StatusText != nil {
+		glib.IdleAdd(func() {
+			StatusText.SetText(message)
+		})
+	}
+}
+
+// Reselects the previously selected wallpaper item in the WallpaperList.
+//
+// If `unselect` is true, it will force unselect all items if it is not found, or if SelectedWallpaperItemId is empty.
 func reselectItem(unselect bool) {
 	log.Printf("Reselecting item with ID: %s", SelectedWallpaperItemId)
 	if SelectedWallpaperItemId != "" {
-		child := FlowBox.FirstChild()
+		child := WallpaperList.FirstChild()
 		found := false
 		for child != nil {
 			if flowBoxChild, ok := child.(*gtk.FlowBoxChild); ok {
 				if flowBoxChild.Child().(*gtk.Overlay).Child().(*gtk.Image).Name() == SelectedWallpaperItemId {
-					FlowBox.SelectChild(flowBoxChild)
+					WallpaperList.SelectChild(flowBoxChild)
 					child = nil
 					found = true
 				}
@@ -281,36 +324,30 @@ func reselectItem(unselect bool) {
 		}
 
 		if !found && unselect {
-			FlowBox.UnselectAll()
+			WallpaperList.UnselectAll()
 			SelectedWallpaperItemId = ""
-			PropertiesBox.RemoveAll()
-			PropertiesBox.SetVisible(false)
+			WallpaperPropertiesBox.RemoveAll()
+			WallpaperPropertiesBox.SetVisible(false)
 		}
 	} else {
 		if unselect {
-			FlowBox.UnselectAll()
+			WallpaperList.UnselectAll()
 			SelectedWallpaperItemId = ""
-			PropertiesBox.RemoveAll()
-			PropertiesBox.SetVisible(false)
+			WallpaperPropertiesBox.RemoveAll()
+			WallpaperPropertiesBox.SetVisible(false)
 		}
 	}
 }
 
-func escapeMarkup(input string) string {
-	input = strings.ReplaceAll(input, "&", "&amp;")
-	input = strings.ReplaceAll(input, "<", "&lt;")
-	input = strings.ReplaceAll(input, ">", "&gt;")
-	return input
-}
-
+// Displays the details of a selected wallpaper item in the WallpaperPropertiesBox.
 func showDetails(wallpaperItem *WallpaperItem) {
-	PropertiesBox.RemoveAll()
+	WallpaperPropertiesBox.RemoveAll()
 
-	PropertiesBox.SetSizeRequest(-1, 128)
-	PropertiesBox.SetHExpand(true)
-	PropertiesBox.SetVExpand(false)
-	PropertiesBox.SetMarginTop(4)
-	PropertiesBox.SetMarginBottom(4)
+	WallpaperPropertiesBox.SetSizeRequest(-1, 128)
+	WallpaperPropertiesBox.SetHExpand(true)
+	WallpaperPropertiesBox.SetVExpand(false)
+	WallpaperPropertiesBox.SetMarginTop(4)
+	WallpaperPropertiesBox.SetMarginBottom(4)
 
 	thumbnail := gtk.NewImage()
 	thumbnail.SetHAlign(gtk.AlignCenter)
@@ -364,13 +401,15 @@ func showDetails(wallpaperItem *WallpaperItem) {
 		descriptionScrollable.SetVExpand(true)
 	}
 
-	PropertiesBox.Append(thumbnail)
-	PropertiesBox.Append(labelsBox)
-	PropertiesBox.SetVisible(true)
+	WallpaperPropertiesBox.Append(thumbnail)
+	WallpaperPropertiesBox.Append(labelsBox)
+	WallpaperPropertiesBox.SetVisible(true)
 	log.Printf("Showing details for wallpaper: %s", wallpaperItem.WallpaperID)
 }
 
-func cacheImage(imagePath string, cachedThumbnailPath string) {
+// Saves a 128x128 preview image of the first path given, to the location of the second path.
+// Used to speed up the load times of the WallpaperItems
+func cacheImage(imagePath string, cachedThumbnailPath string, pixelSize int) {
 	// TODO: add support for gifs
 	file, err := os.Open(imagePath)
 	if err != nil {
@@ -385,9 +424,9 @@ func cacheImage(imagePath string, cachedThumbnailPath string) {
 		return
 	}
 
-	// Resize the image to the desired thumbnail size (128x128 pixels)
+	// Resize the image to the desired thumbnail size (pixelSize by pixelSize pixels)
 	// this is to have a uniform look for all images
-	thumbnail := imaging.Fit(img, 128, 128, imaging.Lanczos)
+	thumbnail := imaging.Fit(img, pixelSize, pixelSize, imaging.Lanczos)
 
 	cachedThumbnailDir := path.Dir(cachedThumbnailPath)
 
@@ -406,6 +445,10 @@ func cacheImage(imagePath string, cachedThumbnailPath string) {
 	log.Printf("Thumbnail saved to: %s", cachedThumbnailDir)
 }
 
+// Runs a goroutine to ensure a cached image, and sets the gtk.Image source to it.
+//
+// First checks the cache directory to see if it's already been cached. If it has then it just loads that one.
+// If it does not find any it, it will create one via cacheImage() to the provided pixelSize by pixelSize.
 func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 	go func() {
 		// check for cached thumbnail first
@@ -414,9 +457,8 @@ func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 		cachedThumbnailPath := path.Join(tempFilePath, "thumbnail.png") // ~/.cache/linux-wallpaperengine-helper/<wallpaper_id>/thumbnail.png
 
 		if _, err := os.Stat(cachedThumbnailPath); os.IsNotExist(err) {
-			// If the cached thumbnail does not exist, create it
 			log.Printf("Cached thumbnail not found for %s, creating it...", imagePath)
-			cacheImage(imagePath, cachedThumbnailPath)
+			cacheImage(imagePath, cachedThumbnailPath, pixelSize)
 		} else {
 			log.Printf("Using cached thumbnail for %s", imagePath)
 		}
@@ -439,7 +481,8 @@ func loadImageAsync(imagePath string, targetImage *gtk.Image, pixelSize int) {
 	}()
 }
 
-func sortByDate(descending bool) {
+// Helper function to sort the WallpaperItems by Modification Time
+func sortByModTime(descending bool) {
 	sort.SliceStable(WallpaperItems, func(i, j int) bool {
 		iModTime := WallpaperItems[i].ModTime
 		jModTime := WallpaperItems[j].ModTime
@@ -455,7 +498,10 @@ func sortByDate(descending bool) {
 	})
 }
 
-func sortByName(descending bool) {
+// Helper function to sort the WallpaperItems by the title in it's project.json
+//
+// Falls back to WallpaperID if Title is not provided.
+func sortByProjectTitle(descending bool) {
 	sort.SliceStable(WallpaperItems, func(i, j int) bool {
 		iName := WallpaperItems[i].projectJson.Title
 		jName := WallpaperItems[j].projectJson.Title
@@ -471,20 +517,25 @@ func sortByName(descending bool) {
 	})
 }
 
+// Helper function to sort all the items, respecting the config, favorites, and broken.
+//
+// First sorts all the Wallpapers by the SortBy selection from the Config.
+// Then it sorts them by putting all the Favorites first
+// Finally, it sorts them by putting all the Broken ones last.
 func sortWallpaperItems() {
 	// sort by date modified, newest first
 	switch Config.SavedUIState.SortBy {
 	case "date_desc":
-		sortByDate(true)
+		sortByModTime(true)
 	case "date_asc":
-		sortByDate(false)
+		sortByModTime(false)
 	case "name_desc":
-		sortByName(true)
+		sortByProjectTitle(true)
 	case "name_asc":
-		sortByName(false)
+		sortByProjectTitle(false)
 	default:
 		log.Printf("Unknown sort criteria: %s, defaulting to date_desc", Config.SavedUIState.SortBy)
-		sortByDate(true)
+		sortByModTime(true)
 	}
 
 	// put favorites first
@@ -497,6 +548,8 @@ func sortWallpaperItems() {
 	})
 
 	// put broken wallpapers at the end
+	// this is important to do at the end, since a wallpaper can be a favorite and broken
+	// we want to make sure all the broken ones are at the bottom
 	sort.SliceStable(WallpaperItems, func(i, j int) bool {
 		if WallpaperItems[i].IsBroken && !WallpaperItems[j].IsBroken {
 			return false
@@ -508,47 +561,36 @@ func sortWallpaperItems() {
 	})
 }
 
+// Forces a full refresh of the WallpaperItems.
+//
+// This reads the WallpaperEngineDir (contents directory) to repopulate the WallpaperItems.
+//
+// First it reads the directory and its subdirectories (depth of 1).
+// Each subdirectory is considered a "wallpaper" and the name of the dir is its WallpaperID.
+//
+// Next it reads the project.json in the directory.
+// It parses the JSON for the wallpaper's Title, Description, and Tags.
+// If it fails reading the JSON, or it isn't present, the Title, Description, and Tags are all set to an empty string, "No description available", and empty string array respectively.
+//
+// Then it populates the rest of the WallpaperItem.
+// It adds the ID, cache location for the preview image, checks if its a favorite/broken, and adds the Modification Time.
+//
+// Finally, it adds the WallpaperItem to the global WallpaperItems slice.
 func reloadWallpaperData() error {
 	WallpaperItems = []WallpaperItem{}
 
-	// get all wallpapers from the wallpaperengine directory
 	wallpaperDir, err := ensureDir(Config.Constants.WallpaperEngineDir)
 	if err != nil {
-		log.Printf("Error ensuring wallpaper directory: %v", err)
-		// Display error message if directory cannot be ensured
-		errorLabel := gtk.NewLabel("Error ensuring wallpaper directory: " + err.Error())
-		errorLabel.SetHExpand(true)
-		errorLabel.SetVExpand(true)
-		errorLabel.SetHAlign(gtk.AlignCenter)
-		errorLabel.SetVAlign(gtk.AlignCenter)
-		Window.SetChild(errorLabel)
-		Window.SetVisible(true)
-		return err
+		return fmt.Errorf("failed to ensure wallpaper directory: %v", err)
 	}
 
 	wallpaperFolders, err := os.ReadDir(wallpaperDir)
 	if err != nil {
-		// Display error message if directory cannot be read
-		errorLabel := gtk.NewLabel("Error reading wallpaper directory: " + err.Error())
-		errorLabel.SetHExpand(true)
-		errorLabel.SetVExpand(true)
-		errorLabel.SetHAlign(gtk.AlignCenter)
-		errorLabel.SetVAlign(gtk.AlignCenter)
-		Window.SetChild(errorLabel)
-		Window.SetVisible(true)
-		return err
+		return fmt.Errorf("failed to read wallpaper directory: %v", err)
 	}
 
 	if len(wallpaperFolders) == 0 {
-		// Display error message if no wallpapers are found
-		errorLabel := gtk.NewLabel("No wallpapers found in the directory: " + wallpaperDir)
-		errorLabel.SetHExpand(true)
-		errorLabel.SetVExpand(true)
-		errorLabel.SetHAlign(gtk.AlignCenter)
-		errorLabel.SetVAlign(gtk.AlignCenter)
-		Window.SetChild(errorLabel)
-		Window.SetVisible(true)
-		return errors.New("No wallpapers found in the directory: " + wallpaperDir)
+		return errors.New("no wallpapers found in the wallpaper directory")
 	}
 
 	for _, wallpaperFolder := range wallpaperFolders {
@@ -608,8 +650,31 @@ func reloadWallpaperData() error {
 	return nil
 }
 
+// Refreshes only the wallpaper display.
+// This reads the WallpaperItems currently set and updates the WallpaperList according to those.
+//
+// If there are no WallpaperItems, it will display an error on the main view saying so.
+// Else, it makes sure that there are no error message displayed and add the WallpaperItems to the global WallpaperList FlexBox.
 func refreshWallpaperDisplay() {
-	FlowBox.RemoveAll()
+	if len(WallpaperItems) < 1 {
+		// assume that an error occurred during wallpaper loading
+		// let us try to reload the wallpaper data
+		if err := reloadWallpaperData(); err != nil {
+			log.Printf("Error reloading wallpaper data: %v", err)
+			showFrontError(err.Error())
+			return
+		}
+	}
+
+	if _, ok := ScrolledWindow.Child().(*gtk.FlowBox); !ok {
+		// we are assuming that an error message is being shown
+		// this may happen if there were no wallpapers found in the wallpaper directory
+		// but now since we got here, there should be
+		// therefore, we should reset the error message
+		hideFrontError()
+	}
+
+	WallpaperList.RemoveAll()
 
 	sortWallpaperItems()
 
@@ -642,7 +707,7 @@ func refreshWallpaperDisplay() {
 				// if the wallpaper is marked as broken, add a warning icon to the top right of the image
 				warningIcon := gtk.NewImageFromIconName("dialog-warning-symbolic")
 				warningIcon.SetPixelSize(24)
-				warningIcon.AddCSSClass("warning-icon")
+				warningIcon.AddCSSClass("error")
 				statusIcons.Append(warningIcon)
 			}
 
@@ -653,7 +718,7 @@ func refreshWallpaperDisplay() {
 
 			attachGestures(iconOverlay, &wallpaperItem, wallpaperItem.IsFavorite, wallpaperItem.IsBroken)
 
-			FlowBox.Append(iconOverlay)
+			WallpaperList.Append(iconOverlay)
 			loadImageAsync(wallpaperItem.CachedPath, imageWidget, 128)
 		}
 	}
@@ -665,12 +730,12 @@ func refreshWallpaperDisplay() {
 	reselectItem(true)
 }
 
+// Helper function to perform a search through the wallpaper's title, description, and tags.
 func filterWallpapersBySearch(query string) {
 	filterWallpapers(func(item WallpaperItem) bool {
 		if query == "" {
 			return true // show all wallpapers if query is empty
 		}
-		// check if the wallpaper title, description, or tags contains the query
 		titleMatch := strings.Contains(strings.ToLower(item.projectJson.Title), strings.ToLower(query))
 		descriptionMatch := strings.Contains(strings.ToLower(item.projectJson.Description), strings.ToLower(query))
 		tagsMatch := false
@@ -684,6 +749,13 @@ func filterWallpapersBySearch(query string) {
 	})
 }
 
+// Runs the predicate function on every WallpaperItem to filter out those that do not match.
+//
+// If the provided function returns true, it will set that Item visible in the list.
+// Else, it hides that item in the list.
+//
+// This also respects the Config.SavedUIState.HideBroken configuration, and will always hide broken ones regardless if true.
+// Therefore, this can also act as a "hide all broken wallpapers" by providing a function that only returns true.
 func filterWallpapers(predicate func(WallpaperItem) bool) {
 	filtered := []WallpaperItem{}
 	for _, item := range WallpaperItems {
@@ -696,7 +768,7 @@ func filterWallpapers(predicate func(WallpaperItem) bool) {
 		}
 	}
 
-	child := FlowBox.FirstChild()
+	child := WallpaperList.FirstChild()
 	for child != nil {
 		if flowBoxChild, ok := child.(*gtk.FlowBoxChild); ok {
 			if slices.ContainsFunc(filtered, func(item WallpaperItem) bool {
@@ -716,6 +788,11 @@ func filterWallpapers(predicate func(WallpaperItem) bool) {
 	}
 }
 
+// Attaches the left and right click gestures on the wallpapers shown.
+//
+// Left click = Shows details for the wallpaper in the PropertiesBox.
+// Double left click = Applies the wallpaper.
+// Right click = Shows options for the wallpaper, such as toggling favorite/broken, and more
 func attachGestures(imageWidget *gtk.Overlay, wallpaperItem *WallpaperItem, isFavorite bool, isBroken bool) {
 	actionGroup := gio.NewSimpleActionGroup()
 

@@ -10,10 +10,19 @@ import (
 )
 
 var Dialog *gtk.Window = nil
+
+// Whether a reloadWallpaperData() is required
 var reloadRequired bool = false
+
+// Whether a refreshWallpaperDisplay() is required
 var refreshRequired bool = false
+
+// Whether a filterWallpapersBySearch(SearchQuery) is required
 var filterRequired bool = false
 
+// Shows the options window as a "Modal".
+//
+// Sets the parent to be the MainWindow and ensures that you are not able to interact with the MainWindow while this is open.
 func showOptionsDialog() {
 	Dialog = gtk.NewWindow()
 	Dialog.SetTitle("Options")
@@ -25,7 +34,10 @@ func showOptionsDialog() {
 		validateConfig()
 		if reloadRequired || refreshRequired {
 			if reloadRequired {
-				reloadWallpaperData()
+				if err := reloadWallpaperData(); err != nil {
+					log.Printf("Error reloading wallpaper data: %v", err)
+					showFrontError(err.Error())
+				}
 			}
 			if refreshRequired {
 				refreshWallpaperDisplay()
@@ -43,12 +55,13 @@ func showOptionsDialog() {
 	notebook.AppendPage(createPostProcessingPage(), gtk.NewLabel("Post Processing"))
 
 	Dialog.SetChild(notebook)
-	Dialog.SetTransientFor(&Window.Window)
+	Dialog.SetTransientFor(&MainWindow.Window)
 	Dialog.SetModal(true)
 	Dialog.SetDestroyWithParent(true)
 	Dialog.SetVisible(true)
 }
 
+// Creates the UI settings page, containing options for Config.SavedUIState and some quick actions
 func createUIPage() *gtk.Box {
 	uiPage := gtk.NewBox(gtk.OrientationVertical, 0)
 	uiPage.SetMarginTop(10)
@@ -60,13 +73,7 @@ func createUIPage() *gtk.Box {
 	uiPage.SetVExpand(true)
 	uiPage.SetHAlign(gtk.AlignFill)
 
-	toggleablesLabel := gtk.NewLabel("Toggleables")
-	toggleablesLabel.SetMarkup("<b>" + toggleablesLabel.Text() + "</b>")
-	toggleablesLabel.SetHExpand(true)
-	toggleablesLabel.SetHAlign(gtk.AlignStart)
-	toggleablesLabel.SetMarginTop(10)
-	toggleablesLabel.SetMarginBottom(10)
-	uiPage.Append(toggleablesLabel)
+	uiPage.Append(addNewSectionLabel("Toggles"))
 
 	hideBrokenToggle := gtk.NewCheckButtonWithLabel("Hide Broken Wallpapers")
 	hideBrokenToggle.SetHAlign(gtk.AlignStart)
@@ -77,13 +84,7 @@ func createUIPage() *gtk.Box {
 	})
 	uiPage.Append(hideBrokenToggle)
 
-	actionsLabel := gtk.NewLabel("Quick Actions")
-	actionsLabel.SetMarkup("<b>" + actionsLabel.Text() + "</b>")
-	actionsLabel.SetHExpand(true)
-	actionsLabel.SetHAlign(gtk.AlignStart)
-	actionsLabel.SetMarginTop(10)
-	actionsLabel.SetMarginBottom(10)
-	uiPage.Append(actionsLabel)
+	uiPage.Append(addNewSectionLabel("Quick Actions"))
 
 	restoreButton := gtk.NewButtonWithLabel("Restore Last Set")
 	restoreButton.SetHExpand(false)
@@ -172,6 +173,7 @@ func createUIPage() *gtk.Box {
 	return uiPage
 }
 
+// Creates the Constants page, containing options for Config.Constants
 func createConstantsPage() *gtk.Box {
 	constantsPage := gtk.NewBox(gtk.OrientationVertical, 0)
 	constantsPage.SetMarginTop(10)
@@ -183,13 +185,7 @@ func createConstantsPage() *gtk.Box {
 	constantsPage.SetVExpand(true)
 	constantsPage.SetHAlign(gtk.AlignFill)
 
-	toggleablesLabel := gtk.NewLabel("Toggleables")
-	toggleablesLabel.SetMarkup("<b>" + toggleablesLabel.Text() + "</b>")
-	toggleablesLabel.SetHExpand(true)
-	toggleablesLabel.SetHAlign(gtk.AlignStart)
-	toggleablesLabel.SetMarginTop(10)
-	toggleablesLabel.SetMarginBottom(10)
-	constantsPage.Append(toggleablesLabel)
+	constantsPage.Append(addNewSectionLabel("Toggles"))
 
 	discardProcessLogsToggle := gtk.NewCheckButtonWithLabel("Discard Created Process Logs (stdout to /dev/null)")
 	discardProcessLogsToggle.SetHAlign(gtk.AlignStart)
@@ -199,13 +195,7 @@ func createConstantsPage() *gtk.Box {
 	})
 	constantsPage.Append(discardProcessLogsToggle)
 
-	wallpaperEngineBinaryLabel := gtk.NewLabel("Wallpaper Engine Binary")
-	wallpaperEngineBinaryLabel.SetMarkup("<b>" + wallpaperEngineBinaryLabel.Text() + "</b>")
-	wallpaperEngineBinaryLabel.SetHExpand(true)
-	wallpaperEngineBinaryLabel.SetHAlign(gtk.AlignStart)
-	wallpaperEngineBinaryLabel.SetMarginTop(10)
-	wallpaperEngineBinaryLabel.SetMarginBottom(10)
-	constantsPage.Append(wallpaperEngineBinaryLabel)
+	constantsPage.Append(addNewSectionLabel("Wallpaper Engine Binary"))
 
 	wallpaperEngineBinaryEntry := gtk.NewEntry()
 	wallpaperEngineBinaryEntry.SetText(Config.Constants.LinuxWallpaperEngineBin)
@@ -218,13 +208,7 @@ func createConstantsPage() *gtk.Box {
 	wallpaperEngineBinaryEntry.SetPlaceholderText("linux-wallpaperengine (must be in PATH!)")
 	constantsPage.Append(wallpaperEngineBinaryEntry)
 
-	wallpaperEngineDirLabel := gtk.NewLabel("Wallpaper Engine Content")
-	wallpaperEngineDirLabel.SetMarkup("<b>" + wallpaperEngineDirLabel.Text() + "</b>")
-	wallpaperEngineDirLabel.SetHExpand(true)
-	wallpaperEngineDirLabel.SetHAlign(gtk.AlignStart)
-	wallpaperEngineDirLabel.SetMarginTop(10)
-	wallpaperEngineDirLabel.SetMarginBottom(10)
-	constantsPage.Append(wallpaperEngineDirLabel)
+	constantsPage.Append(addNewSectionLabel("Wallpaper Engine Content"))
 
 	wallpaperEngineDirBox := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	wallpaperEngineDirBox.SetHExpand(true)
@@ -268,13 +252,7 @@ func createConstantsPage() *gtk.Box {
 	wallpaperEngineDirBox.Append(wallpaperEngineDirButton)
 	wallpaperEngineDirBox.Append(wallpaperEngineDirEntry)
 
-	wallpaperEngineAssetsLabel := gtk.NewLabel("Wallpaper Engine Assets")
-	wallpaperEngineAssetsLabel.SetMarkup("<b>" + wallpaperEngineAssetsLabel.Text() + "</b>")
-	wallpaperEngineAssetsLabel.SetHExpand(true)
-	wallpaperEngineAssetsLabel.SetHAlign(gtk.AlignStart)
-	wallpaperEngineAssetsLabel.SetMarginTop(10)
-	wallpaperEngineAssetsLabel.SetMarginBottom(10)
-	constantsPage.Append(wallpaperEngineAssetsLabel)
+	constantsPage.Append(addNewSectionLabel("Wallpaper Engine Assets"))
 
 	wallpaperEngineAssetsBox := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	wallpaperEngineAssetsBox.SetHExpand(true)
@@ -319,6 +297,7 @@ func createConstantsPage() *gtk.Box {
 	return constantsPage
 }
 
+// Creates the Post Processing page, containing options for Config.PostProcessing
 func createPostProcessingPage() *gtk.Box {
 	postProcessingPage := gtk.NewBox(gtk.OrientationVertical, 0)
 	postProcessingPage.SetMarginTop(10)
@@ -330,13 +309,7 @@ func createPostProcessingPage() *gtk.Box {
 	postProcessingPage.SetVExpand(true)
 	postProcessingPage.SetHAlign(gtk.AlignFill)
 
-	toggleablesLabel := gtk.NewLabel("Toggleables")
-	toggleablesLabel.SetMarkup("<b>" + toggleablesLabel.Text() + "</b>")
-	toggleablesLabel.SetHExpand(true)
-	toggleablesLabel.SetHAlign(gtk.AlignStart)
-	toggleablesLabel.SetMarginTop(10)
-	toggleablesLabel.SetMarginBottom(10)
-	postProcessingPage.Append(toggleablesLabel)
+	postProcessingPage.Append(addNewSectionLabel("Toggles"))
 
 	postProcessingEnabled := gtk.NewCheckButtonWithLabel("Enable Post-Processing")
 	postProcessingEnabled.SetHAlign(gtk.AlignStart)
@@ -354,13 +327,7 @@ func createPostProcessingPage() *gtk.Box {
 	})
 	postProcessingPage.Append(setSWWWEnabled)
 
-	artificialDelayLabel := gtk.NewLabel("Artificial Delay")
-	artificialDelayLabel.SetMarkup("<b>" + artificialDelayLabel.Text() + "</b>")
-	artificialDelayLabel.SetHExpand(true)
-	artificialDelayLabel.SetHAlign(gtk.AlignStart)
-	artificialDelayLabel.SetMarginTop(10)
-	artificialDelayLabel.SetMarginBottom(10)
-	postProcessingPage.Append(artificialDelayLabel)
+	postProcessingPage.Append(addNewSectionLabel("Artificial Delay"))
 
 	artificialDelayBox := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	postProcessingPage.Append(artificialDelayBox)
@@ -382,45 +349,35 @@ func createPostProcessingPage() *gtk.Box {
 		delay, err := time.ParseDuration(artificialDelayEntry.Text())
 		if err != nil {
 			artificialDelayWarning.SetTooltipText("Invalid duration format")
+			artificialDelayEntry.AddCSSClass("error")
 			artificialDelayWarning.SetVisible(true)
 			return
 		}
 
 		Config.PostProcessing.ArtificialDelay = int64(delay / time.Second)
+		artificialDelayEntry.RemoveCSSClass("error")
 		artificialDelayWarning.SetVisible(false)
 	})
 	artificialDelayBox.Append(artificialDelayEntry)
 	artificialDelayBox.Append(artificialDelayWarning)
 
-	screenshotFilesLabel := gtk.NewLabel("Screenshot Files (remove all to disable)")
-	screenshotFilesLabel.SetMarkup("<b>" + screenshotFilesLabel.Text() + "</b>")
-	screenshotFilesLabel.SetHExpand(true)
-	screenshotFilesLabel.SetHAlign(gtk.AlignStart)
-	screenshotFilesLabel.SetMarginTop(10)
-	screenshotFilesLabel.SetMarginBottom(10)
-	postProcessingPage.Append(screenshotFilesLabel)
+	postProcessingPage.Append(addNewSectionLabel("Screenshot Files (remove all to disable)"))
 
-	screenshotFilesFlowBox := gtk.NewFlowBox()
-	screenshotFilesFlowBox.SetHAlign(gtk.AlignFill)
-	screenshotFilesFlowBox.SetOrientation(gtk.OrientationHorizontal)
-	screenshotFilesFlowBox.SetSelectionMode(gtk.SelectionNone)
-	screenshotFilesFlowBox.SetColumnSpacing(4)
-	screenshotFilesFlowBox.SetRowSpacing(4)
-	screenshotFilesFlowBox.SetMinChildrenPerLine(1)
-	screenshotFilesFlowBox.SetMaxChildrenPerLine(1)
-	screenshotFilesFlowBox.SetHomogeneous(true)
-	screenshotFilesFlowBox.SetHExpand(true)
-	screenshotFilesFlowBox.SetVExpand(false)
-	refreshScreenshotFilesList(screenshotFilesFlowBox)
-	postProcessingPage.Append(screenshotFilesFlowBox)
+	screenshotFileList := gtk.NewFlowBox()
+	screenshotFileList.SetHAlign(gtk.AlignFill)
+	screenshotFileList.SetOrientation(gtk.OrientationHorizontal)
+	screenshotFileList.SetSelectionMode(gtk.SelectionNone)
+	screenshotFileList.SetColumnSpacing(4)
+	screenshotFileList.SetRowSpacing(4)
+	screenshotFileList.SetMinChildrenPerLine(1)
+	screenshotFileList.SetMaxChildrenPerLine(1)
+	screenshotFileList.SetHomogeneous(true)
+	screenshotFileList.SetHExpand(true)
+	screenshotFileList.SetVExpand(false)
+	refreshScreenshotFilesList(screenshotFileList)
+	postProcessingPage.Append(screenshotFileList)
 
-	postCommandLabel := gtk.NewLabel("Post Command")
-	postCommandLabel.SetMarkup("<b>" + postCommandLabel.Text() + "</b>")
-	postCommandLabel.SetHExpand(true)
-	postCommandLabel.SetHAlign(gtk.AlignStart)
-	postCommandLabel.SetMarginTop(10)
-	postCommandLabel.SetMarginBottom(10)
-	postProcessingPage.Append(postCommandLabel)
+	postProcessingPage.Append(addNewSectionLabel("Post Command"))
 
 	postCommandEntry := gtk.NewEntry()
 	postCommandEntry.SetText(Config.PostProcessing.PostCommand)
@@ -436,8 +393,24 @@ func createPostProcessingPage() *gtk.Box {
 	return postProcessingPage
 }
 
-func refreshScreenshotFilesList(screenshotFilesFlowBox *gtk.FlowBox) {
-	screenshotFilesFlowBox.RemoveAll()
+// Helper function to create a label with the provided text to ensure uniform styles.
+func addNewSectionLabel(text string) *gtk.Label {
+	label := gtk.NewLabel(text)
+	label.SetMarkup("<b>" + escapeMarkup(label.Text()) + "</b>")
+	label.SetHExpand(true)
+	label.SetHAlign(gtk.AlignStart)
+	label.SetMarginTop(10)
+	label.SetMarginBottom(10)
+	return label
+}
+
+// Helper function to create the items for the screenshot files list.
+//
+// Each item has a button the change the current item's location, a text input showing the location, and a remove button to remove the item.
+//
+// Also adds an "Add" button to add more screenshot locations to the list, appending Config.PostProcessing.ScreenshotFiles and refreshing the list.
+func refreshScreenshotFilesList(screenshotFileList *gtk.FlowBox) {
+	screenshotFileList.RemoveAll()
 
 	for i, file := range Config.PostProcessing.ScreenshotFiles {
 		hBox := gtk.NewBox(gtk.OrientationHorizontal, 4)
@@ -452,7 +425,6 @@ func refreshScreenshotFilesList(screenshotFilesFlowBox *gtk.FlowBox) {
 		button.Connect("clicked", func() {
 			filer := gio.NewFileForPath(file)
 
-			// open a file dialog to select a new screenshot file
 			fileDialog := gtk.NewFileDialog()
 			fileDialog.SetTitle("Select where to save the screenshot file")
 			fileDialog.SetAcceptLabel("Save")
@@ -466,7 +438,7 @@ func refreshScreenshotFilesList(screenshotFilesFlowBox *gtk.FlowBox) {
 				}
 				if selectedFile.Path() != "" {
 					Config.PostProcessing.ScreenshotFiles[i] = selectedFile.Path()
-					refreshScreenshotFilesList(screenshotFilesFlowBox)
+					refreshScreenshotFilesList(screenshotFileList)
 				}
 			})
 		})
@@ -486,11 +458,11 @@ func refreshScreenshotFilesList(screenshotFilesFlowBox *gtk.FlowBox) {
 		removeButton.SetSizeRequest(24, 24)
 		removeButton.Connect("clicked", func() {
 			Config.PostProcessing.ScreenshotFiles = append(Config.PostProcessing.ScreenshotFiles[:i], Config.PostProcessing.ScreenshotFiles[i+1:]...)
-			refreshScreenshotFilesList(screenshotFilesFlowBox)
+			refreshScreenshotFilesList(screenshotFileList)
 		})
 		hBox.Append(removeButton)
 
-		screenshotFilesFlowBox.Append(hBox)
+		screenshotFileList.Append(hBox)
 	}
 
 	addButton := gtk.NewButtonFromIconName("list-add")
@@ -499,7 +471,6 @@ func refreshScreenshotFilesList(screenshotFilesFlowBox *gtk.FlowBox) {
 	addButton.SetHAlign(gtk.AlignFill)
 	addButton.SetSizeRequest(-1, 24)
 	addButton.Connect("clicked", func() {
-		// open a file dialog to select a new screenshot file
 		fileDialog := gtk.NewFileDialog()
 		fileDialog.SetTitle("Select where to save the screenshot file")
 		fileDialog.SetAcceptLabel("Save")
@@ -512,10 +483,10 @@ func refreshScreenshotFilesList(screenshotFilesFlowBox *gtk.FlowBox) {
 			}
 			if selectedFile.Path() != "" {
 				Config.PostProcessing.ScreenshotFiles = append(Config.PostProcessing.ScreenshotFiles, selectedFile.Path())
-				refreshScreenshotFilesList(screenshotFilesFlowBox)
+				refreshScreenshotFilesList(screenshotFileList)
 			}
 		})
 	})
 
-	screenshotFilesFlowBox.Append(addButton)
+	screenshotFileList.Append(addButton)
 }

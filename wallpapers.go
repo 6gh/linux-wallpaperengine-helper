@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -8,17 +9,37 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"regexp"
 	"slices"
 	"strconv"
 	"time"
 
-	"github.com/diamondburned/gotk4/pkg/core/glib"
 	"golang.org/x/image/bmp"
 )
 
+type WallpaperItem struct {
+	WallpaperID   string
+	WallpaperPath string
+	CachedPath    string
+	IsFavorite    bool
+	IsBroken      bool
+	ModTime       time.Time
+
+	// get from project.json
+	projectJson ProjectJSON
+}
+
+type ProjectJSON struct {
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	Tags         []string `json:"tags"`
+	PreviewImage string   `json:"preview"`
+}
+
+var WallpaperItems []WallpaperItem = []WallpaperItem{}
 var settingWallpaper bool = false
 
+// Creates the command string to run linux-wallpaperengine with the given wallpaper path and volume.
+// Also returns the path to the screenshot file that will be created by the command as the second return value.
 func createWallpaperCommand(wallpaperPath string, volume float64) (string, string) {
 	cmd := Config.Constants.LinuxWallpaperEngineBin + " --screen-root HDMI-A-1 --bg " + wallpaperPath
 
@@ -42,27 +63,12 @@ func createWallpaperCommand(wallpaperPath string, volume float64) (string, strin
 	return cmd, cacheScreenshot
 }
 
-func updateGUIStatusText(message string) {
-	if StatusText != nil {
-		glib.IdleAdd(func() {
-			StatusText.SetText(message)
-		})
-	}
-}
-
-func replaceVariablesInCommand(command string, variables map[string]string) string {
-	// do not modify the original command, return a new string with replacements
-	output := command
-	for key, value := range variables {
-		output = regexp.MustCompile(`%` + key + `%`).ReplaceAllString(output, value)
-	}
-	return output
-}
-
-func applyWallpaper(wallpaperPath string, volume float64) bool {
+// Applies the wallpaper from the given wallpaperPath, with the specified volume.
+//
+// Returns nil if the wallpaper was successfully applied, an error otherwise.
+func applyWallpaper(wallpaperPath string, volume float64) error {
 	if settingWallpaper {
-		log.Println("Another wallpaper is currently being set. Please wait before setting another.")
-		return false
+		return fmt.Errorf("another wallpaper is currently being set. Please wait before setting another wallpaper")
 	}
 	updateGUIStatusText("Starting linux-wallpaperengine...")
 	settingWallpaper = true
@@ -76,15 +82,14 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 
 	err := tryKillProcesses("linux-wallpaperengine")
 	if err != nil {
-		log.Printf("Error trying to kill existing processes: %v", err)
-		return false
+		return fmt.Errorf("error trying to kill existing processes: %v", err)
 	}
 
 	log.Println("Executing command:", cmd)
 	pid, err := runDetachedProcess("sh", "-c", cmd)
 	if err != nil {
-		log.Printf("Error starting wallpaper command '%s': %v", cmd, err)
-		return false // exit if we cannot start the command, to prevent multiple instances taking up resources
+		// exit if we cannot start the command, to prevent multiple instances taking up resources
+		return fmt.Errorf("error starting wallpaper command '%s': %v", cmd, err)
 	} else {
 		log.Printf("Successfully started detached wallpaper command (PID: %d): %s", pid, cmd)
 	}
@@ -146,31 +151,32 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 					}
 
 					switch ext := path.Ext(filePath); ext {
-						case ".jpg", ".jpeg":
-							err = jpeg.Encode(dest, img, nil)
-							if err != nil {
-								log.Printf("Error encoding JPEG for transcoding: %v", err)
-							}
-							log.Printf("Successfully transcoded screenshot to: %s", filePath)
-						case ".bmp":
-							err = bmp.Encode(dest, img)
-							if err != nil {
-								log.Printf("Error encoding BMP for transcoding: %v", err)
-							}
-							log.Printf("Successfully transcoded screenshot to: %s", filePath)
-						default:
-							log.Printf("Unsupported file format: %s", ext)
+					case ".jpg", ".jpeg":
+						err = jpeg.Encode(dest, img, nil)
+						if err != nil {
+							log.Printf("Error encoding JPEG for transcoding: %v", err)
+						}
+						log.Printf("Successfully transcoded screenshot to: %s", filePath)
+					case ".bmp":
+						err = bmp.Encode(dest, img)
+						if err != nil {
+							log.Printf("Error encoding BMP for transcoding: %v", err)
+						}
+						log.Printf("Successfully transcoded screenshot to: %s", filePath)
+					default:
+						log.Printf("Unsupported file format: %s", ext)
 					}
 				}
 			}
 		}
 
 		if Config.PostProcessing.PostCommand != "" {
-			postCmdStr := replaceVariablesInCommand(Config.PostProcessing.PostCommand, map[string]string{
+			postCmdStr := replaceVariablesInString(Config.PostProcessing.PostCommand, map[string]string{
 				"screenshot":    cacheScreenshot,
 				"wallpaperPath": wallpaperPath,
 				"wallpaperId":   path.Base(wallpaperPath),
 				"volume":        strconv.FormatFloat(volume, 'f', 0, 64),
+				"pid":           strconv.Itoa(pid),
 			})
 
 			log.Printf("Post-processing command: %s", postCmdStr)
@@ -191,23 +197,25 @@ func applyWallpaper(wallpaperPath string, volume float64) bool {
 
 	// Save the last set wallpaper ID
 	Config.SavedUIState.LastSetId = path.Base(wallpaperPath)
-	return true
+	return nil
 }
 
-func setSWWW(screenshotPath string) bool {
+// Runs `swww img <screenshotPath>` to set swww's wallpaper.
+// Returns true if the command was successfully started, false otherwise.
+//
+// Also ensures the swww-daemon is running.
+func setSWWW(screenshotPath string) error {
 	runningDaemons, err := getRunningProcessPids("swww-daemon")
-	
+
 	if err != nil {
-		log.Println("Couldn't check for swww-daemon running.", err)
-		return false
+		return fmt.Errorf("failed to check for swww-daemon running: %v", err)
 	}
 
 	if len(runningDaemons) < 1 {
 		log.Println("swww-daemon not running, starting swww-daemon")
 		pid, err := runDetachedProcess("swww-daemon")
 		if err != nil {
-			log.Println("swww-daemon couldn't be started.", err)
-			return false
+			return fmt.Errorf("failed to start swww-daemon: %v", err)
 		}
 
 		log.Printf("Started swww-daemon [PID: %v]", pid)
@@ -215,34 +223,38 @@ func setSWWW(screenshotPath string) bool {
 
 	pid, err := runDetachedProcess("swww", "img", screenshotPath)
 	if err != nil {
-		log.Println("swww command couldn't be started.", err)
-		return false
+		return fmt.Errorf("failed to start swww command: %v", err)
 	}
 
 	log.Printf("Started swww command [PID: %v]", pid)
-	return true
+	return nil
 }
 
-func restoreWallpaper() bool {
+// Restores the last set wallpaper provided from Config.SavedUIState.LastSetId
+//
+// Returns nil if the wallpaper was successfully restored, an error otherwise.
+func restoreWallpaper() error {
 	if Config.SavedUIState.LastSetId == "" {
-		log.Println("No last set wallpaper ID found, cannot restore wallpaper.")
-		return false
+		return fmt.Errorf("no last set wallpaper ID found")
 	}
 
 	wallpaperPath, err := resolvePath(path.Join(Config.Constants.WallpaperEngineDir, Config.SavedUIState.LastSetId))
 	if err != nil {
-		log.Printf("Failed to restore wallpaper; Error resolving wallpaper path: %v", err)
-		return false
+		return fmt.Errorf("failed to resolve wallpaper path: %v", err)
 	}
 
 	log.Printf("Restoring last set wallpaper: %s", wallpaperPath)
 	return applyWallpaper(wallpaperPath, float64(Config.SavedUIState.Volume))
 }
 
-func applyRandomWallpaper() bool {
+// Applies a random wallpaper from the available wallpapers.
+//
+// Requires WallpaperItems to be populated with available wallpapers.
+//
+// Returns nil if a random wallpaper was successfully applied, an error otherwise.
+func applyRandomWallpaper() error {
 	if len(WallpaperItems) == 0 {
-		log.Println("No wallpapers available to apply.")
-		return false
+		return fmt.Errorf("no wallpapers available to apply")
 	}
 
 	nonBrokenWallpapers := make([]WallpaperItem, 0)
@@ -252,8 +264,7 @@ func applyRandomWallpaper() bool {
 		}
 	}
 	if len(nonBrokenWallpapers) == 0 {
-		log.Println("No non-broken wallpapers available to apply.")
-		return false
+		return fmt.Errorf("no non-broken wallpapers available to apply")
 	}
 
 	randomIndex := rand.Intn(len(nonBrokenWallpapers))
